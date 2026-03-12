@@ -1,0 +1,22 @@
+{
+  "name": "@planetbee/seller-assistant",
+  "version": "0.1.0",
+  "description": "Seller assistant plugin for OpenClaw.",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE",
+    "skills/"
+  ],
+  "dependencies": {
+    "@shopify/admin-api-client": "^1.1.2"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
