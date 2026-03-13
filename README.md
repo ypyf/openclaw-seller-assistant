@@ -113,17 +113,13 @@ In that structure:
 
 ## Shopify Auth Model
 
-This plugin does not ship a shared public Shopify app or a merchant install flow.
+This plugin uses a `bring your own Shopify app` model:
 
-The current Shopify integration is a `bring your own Shopify app` model:
-
-- each merchant must create or use a Shopify app owned by that merchant's own organization
-- that app must be installed on a store the merchant owns
+- the merchant creates or uses a Shopify app owned by that merchant's own organization
+- that app is installed on a store the merchant owns
 - the merchant then configures this plugin with that store's `storeDomain`, `clientId`, and `clientSecretEnv`
 
-This matters because the plugin currently requests Admin API access using Shopify's client credentials grant. That flow is intended for apps developed by the same organization that owns the target store. It is not the correct auth model for a shared public app distributed by this plugin.
-
-If you need a single shared Shopify app that any merchant can install, this plugin will need a different architecture with Shopify install callbacks, token storage, and OAuth or token exchange.
+The plugin requests Admin API access using the merchant's own app credentials.
 
 ## Shopify Setup
 

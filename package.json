@@ -1,7 +1,19 @@
 {
   "name": "@planetbee/seller-assistant",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Seller assistant plugin for OpenClaw.",
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "seller",
+    "assistant",
+    "shopify",
+    "ecommerce",
+    "commerce",
+    "merchant",
+    "amazon",
+    "operations"
+  ],
   "type": "module",
   "license": "MIT",
   "files": [
