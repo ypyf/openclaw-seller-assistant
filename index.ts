@@ -76,6 +76,51 @@ const textResult = (text: string): AgentToolResult<unknown> => ({
   details: null,
 })
 
+type FlowResolution<T> =
+  | { kind: "ready"; value: T }
+  | { kind: "needs_input"; message: string }
+
+const ready = <T>(value: T): FlowResolution<T> => ({ kind: "ready", value })
+
+const needsInput = <T = never>(message: string): FlowResolution<T> => ({
+  kind: "needs_input",
+  message,
+})
+
+const resolveNonNegativeNumber = (
+  value: unknown,
+  fieldName: string,
+  missingMessage: string,
+): FlowResolution<number> => {
+  const parsed = optionalNumber(value)
+  if (parsed === null) {
+    return needsInput(missingMessage)
+  }
+  if (parsed < 0) {
+    return needsInput(
+      `Ask the user to correct ${fieldName}. The current value ${parsed} is invalid.`,
+    )
+  }
+  return ready(parsed)
+}
+
+const resolvePositiveNumber = (
+  value: unknown,
+  fieldName: string,
+  missingMessage: string,
+): FlowResolution<number> => {
+  const parsed = optionalNumber(value)
+  if (parsed === null) {
+    return needsInput(missingMessage)
+  }
+  if (parsed <= 0) {
+    return needsInput(
+      `Ask the user to correct ${fieldName}. The current value ${parsed} is invalid.`,
+    )
+  }
+  return ready(parsed)
+}
+
 const requireNonNegativeNumber = (value: unknown, fieldName: string) => {
   const parsed = optionalNumber(value)
   if (parsed === null) {
@@ -991,10 +1036,12 @@ const collectTitleCandidates = async (client: ShopifyGraphQLClient, title: strin
 const resolveShopifyVariantSelection = async (
   client: ShopifyGraphQLClient,
   requestedValue: string,
-): Promise<ShopifyVariantSelection> => {
+): Promise<FlowResolution<ShopifyVariantSelection>> => {
   const candidates = await collectTitleCandidates(client, requestedValue)
   if (candidates.length === 0) {
-    throw new Error(`No Shopify product variant was found for "${requestedValue}".`)
+    return needsInput(
+      `Ask the user to confirm the exact SKU or full product title for "${requestedValue}". No matching Shopify product was found.`,
+    )
   }
 
   const scoredCandidates = candidates
@@ -1007,7 +1054,7 @@ const resolveShopifyVariantSelection = async (
     .sort((left, right) => right.score - left.score)
 
   if (scoredCandidates.length === 0) {
-    throw new Error(
+    return needsInput(
       `Ask the user to confirm the exact SKU or full product title for "${requestedValue}". No matching Shopify product was found.`,
     )
   }
@@ -1024,14 +1071,14 @@ const resolveShopifyVariantSelection = async (
 
   if (bestMatchKind === "title_fuzzy" && distinctProductKeys.length > 1) {
     const productChoices = dedupeProductChoices(bestCandidates)
-    throw new Error(
+    return needsInput(
       `Ask the user to choose one exact SKU or full product title for "${requestedValue}": ${formatChoiceList(productChoices)}.`,
     )
   }
 
   if (distinctProductKeys.length > 1) {
     const productChoices = dedupeProductChoices(bestCandidates)
-    throw new Error(
+    return needsInput(
       `Ask the user to choose one exact SKU or full product title for "${requestedValue}": ${formatChoiceList(productChoices)}.`,
     )
   }
@@ -1041,7 +1088,7 @@ const resolveShopifyVariantSelection = async (
   const isSkuMatch = bestMatchKind === "sku_exact"
 
   if (isSkuMatch && bestCandidates.length > 1) {
-    throw new Error(
+    return needsInput(
       `Ask the user to choose one exact SKU for "${requestedValue}": ${formatChoiceList(bestCandidates.map(candidate => candidate.variant))}.`,
     )
   }
@@ -1061,16 +1108,12 @@ const resolveShopifyVariantSelection = async (
     ),
   ]
 
-  return {
+  return ready({
     variants: resolvedVariants,
     resolvedSku: resolvedSkus.length === 1 ? resolvedSkus[0] : requestedValue,
     resolvedSkus: resolvedSkus.length > 0 ? resolvedSkus : [requestedValue],
     matchNames,
-  }
-}
-
-const fetchShopifyVariantBySku = async (client: ShopifyGraphQLClient, sku: string) => {
-  return (await resolveShopifyVariantSelection(client, sku)).variants
+  })
 }
 
 const fetchShopifyDailySalesBySku = async (
@@ -1175,23 +1218,32 @@ const loadShopifyRestockSnapshotFromClient = async (
   lookbackDays: number,
 ) => {
   const selection = await resolveShopifyVariantSelection(client, sku)
+  if (selection.kind !== "ready") {
+    return selection
+  }
   const [variants, dailySalesUnits] = await Promise.all([
-    Promise.resolve(selection.variants),
-    fetchShopifyDailySalesBySku(client, selection, lookbackDays),
+    Promise.resolve(selection.value.variants),
+    fetchShopifyDailySalesBySku(client, selection.value, lookbackDays),
   ])
 
   const onHandUnits = sum(variants.map(variant => toNumber(variant?.inventoryQuantity)))
   const firstVariant = variants[0]
 
   return {
+    kind: "ready" as const,
+    value: {
     source: "shopify",
     storeName: store.name,
-    sku: selection.resolvedSku,
+    sku: selection.value.resolvedSku,
     productName:
-      firstVariant?.product?.title ?? firstVariant?.displayName ?? firstVariant?.sku ?? selection.resolvedSku,
+      firstVariant?.product?.title ??
+      firstVariant?.displayName ??
+      firstVariant?.sku ??
+      selection.value.resolvedSku,
     onHandUnits,
     dailySalesUnits,
     lookbackDays,
+    },
   }
 }
 
@@ -1201,20 +1253,26 @@ const loadShopifyInventorySnapshotFromClient = async (
   productRef: string,
 ) => {
   const selection = await resolveShopifyVariantSelection(client, productRef)
-  const variants = selection.variants
+  if (selection.kind !== "ready") {
+    return selection
+  }
+  const variants = selection.value.variants
   const onHandUnits = sum(variants.map(variant => toNumber(variant?.inventoryQuantity)))
   const firstVariant = variants[0]
 
   return {
+    kind: "ready" as const,
+    value: {
     source: "shopify",
     storeName: store.name,
-    sku: selection.resolvedSku,
+    sku: selection.value.resolvedSku,
     productName:
       firstVariant?.product?.title ??
       firstVariant?.displayName ??
       firstVariant?.sku ??
-      selection.resolvedSku,
+      selection.value.resolvedSku,
     onHandUnits,
+    },
   }
 }
 
@@ -1256,7 +1314,10 @@ const loadShopifyProductSnapshotFromClient = async (
   productRef: string,
 ) => {
   const selection = await resolveShopifyVariantSelection(client, productRef)
-  const variants = selection.variants
+  if (selection.kind !== "ready") {
+    return selection
+  }
+  const variants = selection.value.variants
   const firstVariant = variants[0]
   const shopResult = await client.request<{
     shop?: { currencyCode?: string | null }
@@ -1267,14 +1328,20 @@ const loadShopifyProductSnapshotFromClient = async (
   }
 
   return {
+    kind: "ready" as const,
+    value: {
     source: "shopify",
     storeName: store.name,
-    sku: selection.resolvedSku,
+    sku: selection.value.resolvedSku,
     productName:
-      firstVariant?.product?.title ?? firstVariant?.displayName ?? firstVariant?.sku ?? selection.resolvedSku,
+      firstVariant?.product?.title ??
+      firstVariant?.displayName ??
+      firstVariant?.sku ??
+      selection.value.resolvedSku,
     onHandUnits: sum(variants.map(variant => toNumber(variant?.inventoryQuantity))),
     currencyCode: shopResult.data?.shop?.currencyCode ?? null,
     ...summarizeShopifyVariantPricing(variants),
+    },
   }
 }
 
@@ -1294,17 +1361,26 @@ const loadShopifyCampaignSnapshot = async (
 ) => {
   const client = await createShopifyClient(store)
   const snapshot = await loadShopifyRestockSnapshotFromClient(client, store, sku, lookbackDays)
-  const productSnapshot = await loadShopifyProductSnapshotFromClient(client, store, snapshot.sku)
+  if (snapshot.kind !== "ready") {
+    return snapshot
+  }
+  const productSnapshot = await loadShopifyProductSnapshotFromClient(client, store, snapshot.value.sku)
+  if (productSnapshot.kind !== "ready") {
+    return productSnapshot
+  }
   const inventoryDaysLeft =
-    snapshot.dailySalesUnits > 0 ? snapshot.onHandUnits / snapshot.dailySalesUnits : 999
+    snapshot.value.dailySalesUnits > 0 ? snapshot.value.onHandUnits / snapshot.value.dailySalesUnits : 999
 
   return {
-    ...snapshot,
-    currencyCode: productSnapshot.currencyCode,
-    currentMarginPct: productSnapshot.currentMarginPct,
-    inventoryDaysLeft,
-    averageUnitPrice: productSnapshot.averageUnitPrice,
-    averageUnitCost: productSnapshot.averageUnitCost,
+    kind: "ready" as const,
+    value: {
+      ...snapshot.value,
+      currencyCode: productSnapshot.value.currencyCode,
+      currentMarginPct: productSnapshot.value.currentMarginPct,
+      inventoryDaysLeft,
+      averageUnitPrice: productSnapshot.value.averageUnitPrice,
+      averageUnitCost: productSnapshot.value.averageUnitCost,
+    },
   }
 }
 
@@ -1749,7 +1825,10 @@ export default function register(api: OpenClawPluginApi) {
       }
 
       const snapshot = await loadShopifyInventorySnapshot(configuredStore.store, params.productRef)
-      return textResult(formatInventoryLookup(snapshot))
+      if (snapshot.kind !== "ready") {
+        return textResult(snapshot.message)
+      }
+      return textResult(formatInventoryLookup(snapshot.value))
     },
   })
 
@@ -1760,12 +1839,16 @@ export default function register(api: OpenClawPluginApi) {
       "Estimate restock urgency for an exact SKU or product title search. Try the tool before asking for an exact SKU. If inventory or sales inputs are omitted, load them from a configured Shopify store. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. Only ask for supplierLeadDays or safetyStockDays if they are still missing after checking plugin config.",
     parameters: SellerRestockSignalParamsSchema,
     async execute(_id: string, params: SellerRestockSignalParams) {
-      const supplierLeadDays =
-        optionalNumber(params.supplierLeadDays) ??
-        optionalNumber(pluginConfig.defaultSupplierLeadDays)
-      const safetyStockDays =
-        optionalNumber(params.safetyStockDays) ??
-        optionalNumber(pluginConfig.defaultSafetyStockDays)
+      const supplierLeadDays = resolvePositiveNumber(
+        optionalNumber(params.supplierLeadDays) ?? optionalNumber(pluginConfig.defaultSupplierLeadDays),
+        "supplierLeadDays",
+        'Ask the user for supplier lead time in days, or configure "defaultSupplierLeadDays" in the plugin config.',
+      )
+      const safetyStockDays = resolveNonNegativeNumber(
+        optionalNumber(params.safetyStockDays) ?? optionalNumber(pluginConfig.defaultSafetyStockDays),
+        "safetyStockDays",
+        'Ask the user for safety stock in days, or configure "defaultSafetyStockDays" in the plugin config.',
+      )
       const salesLookbackDays = Math.max(
         1,
         Math.round(toNumber(params.salesLookbackDays, pluginConfig.defaultSalesLookbackDays)),
@@ -1774,56 +1857,57 @@ export default function register(api: OpenClawPluginApi) {
       const hasManualSales = typeof params.dailySalesUnits === "number"
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
 
-      if (supplierLeadDays === null) {
-        throw new Error(
-          'Ask the user for supplier lead time in days, or configure "defaultSupplierLeadDays" in the plugin config.',
-        )
+      if (supplierLeadDays.kind !== "ready") {
+        return textResult(supplierLeadDays.message)
       }
-      if (supplierLeadDays <= 0) {
-        throw new Error(
-          `Ask the user to provide a supplier lead time greater than 0 days. The current value is ${supplierLeadDays}.`,
-        )
-      }
-
-      if (safetyStockDays === null) {
-        throw new Error(
-          'Ask the user for safety stock in days, or configure "defaultSafetyStockDays" in the plugin config.',
-        )
-      }
-      if (safetyStockDays < 0) {
-        throw new Error(
-          `Ask the user to provide a safety stock value greater than or equal to 0 days. The current value is ${safetyStockDays}.`,
-        )
+      if (safetyStockDays.kind !== "ready") {
+        return textResult(safetyStockDays.message)
       }
 
       if (hasManualInventory && hasManualSales) {
+        const onHandUnits = resolveNonNegativeNumber(
+          params.onHandUnits,
+          "onHandUnits",
+          "Ask the user for current on-hand inventory.",
+        )
+        const dailySalesUnits = resolveNonNegativeNumber(
+          params.dailySalesUnits,
+          "dailySalesUnits",
+          "Ask the user for average daily sales.",
+        )
+        if (onHandUnits.kind !== "ready") {
+          return textResult(onHandUnits.message)
+        }
+        if (dailySalesUnits.kind !== "ready") {
+          return textResult(dailySalesUnits.message)
+        }
         return textResult(
           formatRestockSignal(
             evaluateRestockSignal({
               sku: params.sku,
-              onHandUnits: requireNonNegativeNumber(params.onHandUnits, "onHandUnits"),
-              dailySalesUnits: requireNonNegativeNumber(params.dailySalesUnits, "dailySalesUnits"),
-              supplierLeadDays,
-              safetyStockDays,
+              onHandUnits: onHandUnits.value,
+              dailySalesUnits: dailySalesUnits.value,
+              supplierLeadDays: supplierLeadDays.value,
+              safetyStockDays: safetyStockDays.value,
             }),
           ),
         )
       }
 
       if (hasManualInventory && !hasManualSales && !configuredStore) {
-        throw new Error(
+        return textResult(
           "Ask the user for average daily sales, or configure a Shopify store so sales can be loaded automatically.",
         )
       }
 
       if (!hasManualInventory && hasManualSales && !configuredStore) {
-        throw new Error(
+        return textResult(
           "Ask the user for current on-hand inventory, or configure a Shopify store so inventory can be loaded automatically.",
         )
       }
 
       if (!configuredStore) {
-        throw new Error(
+        return textResult(
           "Ask the user either to provide inventory and sales inputs manually, or to configure a store in plugins.entries.seller-assistant.config.",
         )
       }
@@ -1843,23 +1927,42 @@ export default function register(api: OpenClawPluginApi) {
             params.sku,
             salesLookbackDays,
           )
+      if (snapshot.kind !== "ready") {
+        return textResult(snapshot.message)
+      }
+
       const onHandUnits = hasManualInventory
-        ? requireNonNegativeNumber(params.onHandUnits, "onHandUnits")
-        : snapshot.onHandUnits
+        ? resolveNonNegativeNumber(
+            params.onHandUnits,
+            "onHandUnits",
+            "Ask the user for current on-hand inventory.",
+          )
+        : ready(snapshot.value.onHandUnits)
       const dailySalesUnits = hasManualSales
-        ? requireNonNegativeNumber(params.dailySalesUnits, "dailySalesUnits")
-        : "dailySalesUnits" in snapshot
-          ? toNumber(snapshot.dailySalesUnits)
+        ? resolveNonNegativeNumber(
+            params.dailySalesUnits,
+            "dailySalesUnits",
+            "Ask the user for average daily sales.",
+          )
+        : "dailySalesUnits" in snapshot.value
+          ? ready(toNumber(snapshot.value.dailySalesUnits))
           : 0
+      if (onHandUnits.kind !== "ready") {
+        return textResult(onHandUnits.message)
+      }
+      if (typeof dailySalesUnits !== "number" && dailySalesUnits.kind !== "ready") {
+        return textResult(dailySalesUnits.message)
+      }
 
       return textResult(
         formatRestockSignal(
           evaluateRestockSignal({
-            ...snapshot,
-            onHandUnits,
-            dailySalesUnits,
-            supplierLeadDays,
-            safetyStockDays,
+            ...snapshot.value,
+            onHandUnits: onHandUnits.value,
+            dailySalesUnits:
+              typeof dailySalesUnits === "number" ? dailySalesUnits : dailySalesUnits.value,
+            supplierLeadDays: supplierLeadDays.value,
+            safetyStockDays: safetyStockDays.value,
           }),
         ),
       )
@@ -1881,18 +1984,28 @@ export default function register(api: OpenClawPluginApi) {
       const hasManualInventoryDays = typeof params.inventoryDaysLeft === "number"
 
       if (hasManualMargin && hasManualInventoryDays) {
+        const currentMarginPct = resolveNonNegativeNumber(
+          params.currentMarginPct,
+          "currentMarginPct",
+          "Ask the user for the current gross margin percentage.",
+        )
+        const inventoryDaysLeft = resolveNonNegativeNumber(
+          params.inventoryDaysLeft,
+          "inventoryDaysLeft",
+          "Ask the user for current inventory cover in days.",
+        )
+        if (currentMarginPct.kind !== "ready") {
+          return textResult(currentMarginPct.message)
+        }
+        if (inventoryDaysLeft.kind !== "ready") {
+          return textResult(inventoryDaysLeft.message)
+        }
         return textResult(
           formatCampaignContext({
             objective: params.objective,
             heroSku: params.heroSku,
-            currentMarginPct: requireNonNegativeNumber(
-              params.currentMarginPct,
-              "currentMarginPct",
-            ),
-            inventoryDaysLeft: requireNonNegativeNumber(
-              params.inventoryDaysLeft,
-              "inventoryDaysLeft",
-            ),
+            currentMarginPct: currentMarginPct.value,
+            inventoryDaysLeft: inventoryDaysLeft.value,
             channel: params.channel,
             constraint: params.constraint,
             targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
@@ -1901,20 +2014,20 @@ export default function register(api: OpenClawPluginApi) {
       }
 
       if (hasManualMargin && !hasManualInventoryDays && !findConfiguredStore(pluginConfig, params.storeId)) {
-        throw new Error(
+        return textResult(
           "To continue the campaign plan, ask the user for current inventory cover in days, or use a configured Shopify store so it can be loaded automatically.",
         )
       }
 
       if (!hasManualMargin && hasManualInventoryDays && !findConfiguredStore(pluginConfig, params.storeId)) {
-        throw new Error(
+        return textResult(
           "To continue the campaign plan, ask the user for the current gross margin percentage, or use a configured Shopify store with product cost data so it can be calculated automatically.",
         )
       }
 
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
-        throw new Error(
+        return textResult(
           "Ask the user either to provide margin and inventory inputs manually, or to configure a store in plugins.entries.seller-assistant.config.",
         )
       }
@@ -1929,18 +2042,36 @@ export default function register(api: OpenClawPluginApi) {
       const snapshot = hasManualInventoryDays && !hasManualMargin
         ? await loadShopifyProductSnapshotFromClient(client, configuredStore.store, params.heroSku)
         : await loadShopifyCampaignSnapshot(configuredStore.store, params.heroSku, salesLookbackDays)
+      if (snapshot.kind !== "ready") {
+        return textResult(snapshot.message)
+      }
       const resolvedCurrentMarginPct = hasManualMargin
-        ? requireNonNegativeNumber(params.currentMarginPct, "currentMarginPct")
-        : optionalNumber(snapshot.currentMarginPct)
+        ? resolveNonNegativeNumber(
+            params.currentMarginPct,
+            "currentMarginPct",
+            "Ask the user for the current gross margin percentage.",
+          )
+        : ready(optionalNumber(snapshot.value.currentMarginPct))
       const resolvedInventoryDaysLeft = hasManualInventoryDays
-        ? requireNonNegativeNumber(params.inventoryDaysLeft, "inventoryDaysLeft")
-        : "inventoryDaysLeft" in snapshot
-          ? toNumber(snapshot.inventoryDaysLeft, 999)
-          : 999
-      const lookbackDays = "lookbackDays" in snapshot ? optionalNumber(snapshot.lookbackDays) ?? undefined : undefined
+        ? resolveNonNegativeNumber(
+            params.inventoryDaysLeft,
+            "inventoryDaysLeft",
+            "Ask the user for current inventory cover in days.",
+          )
+        : ready(
+            "inventoryDaysLeft" in snapshot.value ? toNumber(snapshot.value.inventoryDaysLeft, 999) : 999,
+          )
+      const lookbackDays =
+        "lookbackDays" in snapshot.value ? optionalNumber(snapshot.value.lookbackDays) ?? undefined : undefined
 
-      if (resolvedCurrentMarginPct === null) {
-        throw new Error(
+      if (resolvedCurrentMarginPct.kind !== "ready") {
+        return textResult(resolvedCurrentMarginPct.message)
+      }
+      if (resolvedInventoryDaysLeft.kind !== "ready") {
+        return textResult(resolvedInventoryDaysLeft.message)
+      }
+      if (resolvedCurrentMarginPct.value === null) {
+        return textResult(
           `Ask the user for the current gross margin % for "${params.heroSku}". If they do not know it, ask for unit cost and selling price so margin can be calculated.`,
         )
       }
@@ -1949,17 +2080,17 @@ export default function register(api: OpenClawPluginApi) {
         formatCampaignContext({
           objective: params.objective,
           heroSku: params.heroSku,
-          currentMarginPct: resolvedCurrentMarginPct,
-          inventoryDaysLeft: resolvedInventoryDaysLeft,
-          productName: snapshot.productName,
+          currentMarginPct: resolvedCurrentMarginPct.value,
+          inventoryDaysLeft: resolvedInventoryDaysLeft.value,
+          productName: snapshot.value.productName,
           channel: params.channel,
           constraint: params.constraint,
-          source: snapshot.source,
-          storeName: snapshot.storeName,
+          source: snapshot.value.source,
+          storeName: snapshot.value.storeName,
           lookbackDays,
-          currencyCode: snapshot.currencyCode,
-          averageUnitPrice: snapshot.averageUnitPrice,
-          averageUnitCost: snapshot.averageUnitCost,
+          currencyCode: snapshot.value.currencyCode,
+          averageUnitPrice: snapshot.value.averageUnitPrice,
+          averageUnitCost: snapshot.value.averageUnitCost,
           targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
         }),
       )
