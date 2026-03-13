@@ -20,7 +20,7 @@
       },
       "targetMarginFloorPct": {
         "type": "number",
-        "description": "Default minimum gross margin percentage used by quote and campaign guidance."
+        "description": "Optional configured margin floor percentage used for quote guardrails and campaign margin buffer calculations."
       },
       "lowInventoryDays": {
         "type": "number",

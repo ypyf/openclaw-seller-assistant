@@ -18,7 +18,7 @@
   "license": "MIT",
   "files": [
     "index.ts",
-    "shopify/",
+    "src/",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE",

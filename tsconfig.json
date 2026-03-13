@@ -11,5 +11,5 @@
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["index.ts", "shopify/**/*.ts"]
+  "include": ["index.ts", "shopify/**/*.ts", "src/**/*.ts"]
 }
