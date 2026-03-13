@@ -358,6 +358,7 @@ const formatQuoteDraft = (input: {
     .join("\n")
 }
 
+/** Registers all seller-facing OpenClaw tools for this plugin instance. */
 export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: PluginConfig) => {
   api.registerTool({
     name: "seller_health_check",

@@ -42,6 +42,7 @@ const getShopifyAccessToken = async (store: ShopifyStoreConfig) => {
   return payload.access_token as string
 }
 
+/** Creates an authenticated Shopify Admin GraphQL client for the configured store. */
 export const createShopifyClient = async (
   store: ShopifyStoreConfig,
 ): Promise<ShopifyGraphQLClient> => {
@@ -54,6 +55,7 @@ export const createShopifyClient = async (
   })
 }
 
+/** Returns an inclusive-exclusive UTC date range ending a given number of days ago. */
 export const getDateRange = (windowDays: number, endDaysAgo: number) => {
   const end = new Date()
   end.setUTCHours(0, 0, 0, 0)
@@ -68,6 +70,7 @@ export const getDateRange = (windowDays: number, endDaysAgo: number) => {
   }
 }
 
+/** Flattens Shopify request and GraphQL errors into a readable message. */
 export const formatShopifyErrors = (errors: unknown) => {
   const baseMessage =
     typeof (errors as { message?: unknown })?.message === "string" &&

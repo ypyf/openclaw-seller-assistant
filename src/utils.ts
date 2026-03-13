@@ -1,7 +1,9 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core"
 
+/** Formats a numeric percentage with one decimal place. */
 export const percentage = (value: number) => `${value.toFixed(1)}%`
 
+/** Formats a currency amount with the given code and locale. */
 export const currency = (value: number, code = "USD", locale = "en-US") =>
   new Intl.NumberFormat(locale, {
     style: "currency",
@@ -9,14 +11,19 @@ export const currency = (value: number, code = "USD", locale = "en-US") =>
     maximumFractionDigits: 2,
   }).format(value)
 
+/** Returns a finite number or falls back to the provided default. */
 export const toNumber = (value: unknown, fallback = 0) =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback
 
+/** Returns a finite number or null when the input is missing or invalid. */
 export const optionalNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : null
 
+/** Normalizes SKUs and titles for exact or fuzzy matching. */
 export const normalizeSku = (value: string) => value.trim().toLowerCase().replace(/[-_\s]+/g, "")
+/** Removes duplicate values while preserving insertion order. */
 export const unique = <T>(values: T[]) => [...new Set(values)]
+/** Splits a search phrase into normalized letter/number tokens. */
 export const tokenizeSearchTerms = (value: string) =>
   unique(
     value
@@ -27,10 +34,13 @@ export const tokenizeSearchTerms = (value: string) =>
       .filter(Boolean),
   )
 
+/** Coerces an unknown value into an array or returns an empty array. */
 export const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : [])
 
+/** Sums a numeric array. */
 export const sum = (values: number[]) => values.reduce((total, value) => total + value, 0)
 
+/** Wraps plain text as an OpenClaw text tool result. */
 export const textResult = (text: string): AgentToolResult<unknown> => ({
   content: [{ type: "text", text }],
   details: null,
@@ -40,13 +50,16 @@ export type FlowResolution<T> =
   | { kind: "ready"; value: T }
   | { kind: "needs_input"; message: string }
 
+/** Builds a successful flow result. */
 export const ready = <T>(value: T): FlowResolution<T> => ({ kind: "ready", value })
 
+/** Builds a flow result that asks the caller to collect more input. */
 export const needsInput = <T = never>(message: string): FlowResolution<T> => ({
   kind: "needs_input",
   message,
 })
 
+/** Validates that a value is a non-negative number or returns a user-facing follow-up prompt. */
 export const resolveNonNegativeNumber = (
   value: unknown,
   fieldName: string,
@@ -64,6 +77,7 @@ export const resolveNonNegativeNumber = (
   return ready(parsed)
 }
 
+/** Validates that a value is a positive number or returns a user-facing follow-up prompt. */
 export const resolvePositiveNumber = (
   value: unknown,
   fieldName: string,
@@ -81,6 +95,7 @@ export const resolvePositiveNumber = (
   return ready(parsed)
 }
 
+/** Converts an objective key like clear_inventory into a title-cased label. */
 export const formatObjectiveLabel = (objective: string) =>
   objective
     .split("_")

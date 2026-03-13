@@ -52,6 +52,7 @@ export type PluginConfig = {
   }
 } & Record<string, unknown>
 
+/** Normalizes raw plugin config into the runtime shape used by the plugin. */
 export const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): PluginConfig => {
   const rawConfig = (api?.pluginConfig ?? {}) as RawPluginConfig
 
@@ -72,6 +73,7 @@ export const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): Pl
 
 const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : [])
 
+/** Resolves the active store from an explicit id, the configured default, or the first store. */
 export const findConfiguredStore = (config: PluginConfig, storeId?: string): ConfiguredStore | null => {
   const groupedStores: ConfiguredStore[] = [
     ...toArray<ShopifyStoreConfig>(config?.stores?.shopify)

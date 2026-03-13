@@ -666,6 +666,7 @@ const summarizeShopifyVariantPricing = (variants: ShopifyResolvedVariant[]) => {
   }
 }
 
+/** Loads a 7-day Shopify store health snapshot with revenue, units sold, and inventory cover. */
 export const loadShopifyHealthSnapshot = async (
   store: ShopifyStoreConfig,
 ): Promise<ShopifyHealthSnapshot> => {
@@ -754,6 +755,7 @@ export const loadShopifyHealthSnapshot = async (
   }
 }
 
+/** Resolves a product and recent sales using an existing Shopify client. */
 export const loadShopifyRestockSnapshotFromClient = async (
   client: ShopifyGraphQLClient,
   store: ShopifyStoreConfig,
@@ -787,6 +789,7 @@ export const loadShopifyRestockSnapshotFromClient = async (
   })
 }
 
+/** Resolves current inventory for a product reference using an existing Shopify client. */
 export const loadShopifyInventorySnapshotFromClient = async (
   client: ShopifyGraphQLClient,
   store: ShopifyStoreConfig,
@@ -813,6 +816,7 @@ export const loadShopifyInventorySnapshotFromClient = async (
   })
 }
 
+/** Resolves current inventory for a product reference by creating a Shopify client on demand. */
 export const loadShopifyInventorySnapshot = async (
   store: ShopifyStoreConfig,
   productRef: string,
@@ -821,6 +825,7 @@ export const loadShopifyInventorySnapshot = async (
   return loadShopifyInventorySnapshotFromClient(client, store, productRef)
 }
 
+/** Loads inventory and pricing details for a product reference using an existing Shopify client. */
 export const loadShopifyProductSnapshotFromClient = async (
   client: ShopifyGraphQLClient,
   store: ShopifyStoreConfig,
@@ -855,6 +860,7 @@ export const loadShopifyProductSnapshotFromClient = async (
   })
 }
 
+/** Resolves a product and recent sales by creating a Shopify client on demand. */
 export const loadShopifyRestockSnapshot = async (
   store: ShopifyStoreConfig,
   sku: string,
@@ -864,6 +870,7 @@ export const loadShopifyRestockSnapshot = async (
   return loadShopifyRestockSnapshotFromClient(client, store, sku, lookbackDays)
 }
 
+/** Loads campaign planning inputs from Shopify, including sales, inventory cover, and pricing. */
 export const loadShopifyCampaignSnapshot = async (
   store: ShopifyStoreConfig,
   sku: string,
@@ -897,6 +904,7 @@ export const loadShopifyCampaignSnapshot = async (
   })
 }
 
+/** Computes reorder urgency and action guidance from inventory and demand inputs. */
 export const evaluateRestockSignal = (input: {
   sku: string
   onHandUnits: number
