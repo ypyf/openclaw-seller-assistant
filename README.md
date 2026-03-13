@@ -5,10 +5,10 @@
 It packages five seller tools:
 
 - `seller_health_check`: diagnose traffic, conversion, revenue, and inventory signals
-- `seller_inventory_lookup`: look up current on-hand inventory for a SKU or product title search
+- `seller_inventory_lookup`: look up current on-hand inventory for an exact SKU or product title search
 - `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
 - `seller_restock_signal`: estimate replenishment urgency
-- `seller_campaign_plan`: generate a campaign plan for a SKU or goal, using Shopify inventory and recent sales when available
+- `seller_campaign_context`: load campaign planning context for an exact SKU or goal, using Shopify inventory and recent sales when available
 
 ## Install
 
@@ -45,20 +45,13 @@ If your config uses plugin or tool allowlists, add the plugin id under `plugins.
       }
     }
   },
-  "agents": {
-    "list": [
-      {
-        "id": "main",
-        "tools": {
-          "allow": [
-            "seller_health_check",
-            "seller_inventory_lookup",
-            "seller_quote_builder",
-            "seller_restock_signal",
-            "seller_campaign_plan"
-          ]
-        }
-      }
+  "tools": {
+    "allow": [
+      "seller_health_check",
+      "seller_inventory_lookup",
+      "seller_quote_builder",
+      "seller_restock_signal",
+      "seller_campaign_context"
     ]
   }
 }
@@ -159,7 +152,7 @@ To use `seller_health_check` with Shopify, grant the app at least these Admin AP
 
 `seller_inventory_lookup` only needs `read_products`.
 
-`seller_restock_signal` and `seller_campaign_plan` use Shopify inventory and recent sales for a SKU, so they need both `read_products` and `read_orders`.
+`seller_restock_signal` and `seller_campaign_context` use Shopify inventory and recent sales for a SKU, so they need both `read_products` and `read_orders`.
 
 Current limitations of the Shopify health check:
 
@@ -185,10 +178,9 @@ After the plugin is loaded and allowed, ask the agent in natural language:
 
 ## Notes
 
-- SKU resolution supports exact SKU and partial SKU.
 - Product title resolution supports full titles and title keywords.
 - Ambiguous title-keyword searches return candidate choices instead of auto-selecting a product.
-
+- Campaign planning is skill-led: `seller_campaign_context` loads planning context, and the campaign-planning skill should ask for any missing required inputs before giving the final recommendation.
 - A next phase can add optional side-effect tools for repricing, inventory sync, or auto-quote dispatch.
 
 ## License

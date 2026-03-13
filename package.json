@@ -24,11 +24,15 @@
     "skills/"
   ],
   "dependencies": {
-    "@shopify/admin-api-client": "^1.1.2"
+    "@shopify/admin-api-client": "^1.1.2",
+    "@sinclair/typebox": "^0.34.48"
   },
   "openclaw": {
     "extensions": [
       "./index.ts"
     ]
+  },
+  "devDependencies": {
+    "openclaw": "^2026.3.12"
   }
 }

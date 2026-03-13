@@ -1,4 +1,7 @@
 import { createAdminApiClient } from "@shopify/admin-api-client"
+import { Type, type Static } from "@sinclair/typebox"
+import type { AgentToolResult } from "@mariozechner/pi-agent-core"
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
 
 declare const process: {
   env: Record<string, string | undefined>
@@ -49,7 +52,17 @@ const tokenizeSearchTerms = (value: string) =>
       .filter(Boolean),
   )
 
-const toPluginConfig = (api: any) => ({
+type PluginConfig = typeof DEFAULT_CONFIG & {
+  defaultStoreId?: string
+  defaultSupplierLeadDays?: number
+  defaultSafetyStockDays?: number
+  stores?: {
+    shopify?: ShopifyStoreConfig[]
+    amazon?: Record<string, unknown>[]
+  }
+} & Record<string, unknown>
+
+const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): PluginConfig => ({
   ...DEFAULT_CONFIG,
   ...(api?.pluginConfig ?? {}),
 })
@@ -58,17 +71,18 @@ const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[
 
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0)
 
-const textResult = (text: string) => ({
+const textResult = (text: string): AgentToolResult<unknown> => ({
   content: [{ type: "text", text }],
+  details: null,
 })
 
 const requireNonNegativeNumber = (value: unknown, fieldName: string) => {
   const parsed = optionalNumber(value)
   if (parsed === null) {
-    throw new Error(`Missing ${fieldName}. Ask the user to provide it.`)
+    throw new Error(`Ask the user to provide ${fieldName}.`)
   }
   if (parsed < 0) {
-    throw new Error(`Invalid ${fieldName}: ${parsed}. Ask the user to correct it.`)
+    throw new Error(`Ask the user to correct ${fieldName}. The current value ${parsed} is invalid.`)
   }
   return parsed
 }
@@ -76,10 +90,10 @@ const requireNonNegativeNumber = (value: unknown, fieldName: string) => {
 const requirePositiveNumber = (value: unknown, fieldName: string) => {
   const parsed = optionalNumber(value)
   if (parsed === null) {
-    throw new Error(`Missing ${fieldName}. Ask the user to provide it.`)
+    throw new Error(`Ask the user to provide ${fieldName}.`)
   }
   if (parsed <= 0) {
-    throw new Error(`Invalid ${fieldName}: ${parsed}. Ask the user to correct it.`)
+    throw new Error(`Ask the user to correct ${fieldName}. The current value ${parsed} is invalid.`)
   }
   return parsed
 }
@@ -526,13 +540,18 @@ type ShopifyGraphQLClient = {
   }>
 }
 
+type ShopifyGraphQLResponse<TData> = {
+  data?: TData
+  errors?: any
+}
+
 const fetchAllShopifyOrders = async (client: ShopifyGraphQLClient, ordersQuery: string) => {
   const orders: NonNullable<NonNullable<ShopifyOrdersPage["orders"]>["nodes"]> = []
   let hasNextPage = true
   let after: string | null = null
 
   while (hasNextPage) {
-    const result = await client.request<ShopifyOrdersPage>(SHOPIFY_ORDERS_PAGE_QUERY, {
+    const result: ShopifyGraphQLResponse<ShopifyOrdersPage> = await client.request<ShopifyOrdersPage>(SHOPIFY_ORDERS_PAGE_QUERY, {
       variables: {
         ordersQuery,
         after,
@@ -543,7 +562,7 @@ const fetchAllShopifyOrders = async (client: ShopifyGraphQLClient, ordersQuery: 
       throw new Error(formatShopifyErrors(result.errors))
     }
 
-    const page = result.data?.orders
+    const page: ShopifyOrdersPage["orders"] | undefined = result.data?.orders
     orders.push(
       ...toArray<NonNullable<NonNullable<ShopifyOrdersPage["orders"]>["nodes"]>[number]>(
         page?.nodes,
@@ -562,7 +581,7 @@ const fetchAllShopifyInventoryUnits = async (client: ShopifyGraphQLClient) => {
   let after: string | null = null
 
   while (hasNextPage) {
-    const result = await client.request<ShopifyVariantsPage>(SHOPIFY_VARIANTS_PAGE_QUERY, {
+    const result: ShopifyGraphQLResponse<ShopifyVariantsPage> = await client.request<ShopifyVariantsPage>(SHOPIFY_VARIANTS_PAGE_QUERY, {
       variables: {
         after,
       },
@@ -572,7 +591,7 @@ const fetchAllShopifyInventoryUnits = async (client: ShopifyGraphQLClient) => {
       throw new Error(formatShopifyErrors(result.errors))
     }
 
-    const page = result.data?.productVariants
+    const page: ShopifyVariantsPage["productVariants"] | undefined = result.data?.productVariants
     inventoryUnits += sum(
       toArray<NonNullable<NonNullable<ShopifyVariantsPage["productVariants"]>["nodes"]>[number]>(
         page?.nodes,
@@ -684,7 +703,7 @@ type ShopifyResolvedCandidate = {
   productKey: string
 }
 
-type ShopifyCandidateMatchKind = "sku_exact" | "sku_partial" | "title_exact" | "title_fuzzy"
+type ShopifyCandidateMatchKind = "sku_exact" | "title_exact" | "title_fuzzy"
 
 type ShopifyVariantSelection = {
   variants: ShopifyResolvedVariant[]
@@ -731,12 +750,6 @@ const scoreVariantCandidate = (variant: ShopifyResolvedVariant, requestedValue: 
   if (title && title.toLowerCase() === requestedValueTrimmed) {
     return 88
   }
-  if (normalizedSku && normalizedRequestedValue && normalizedSku.startsWith(normalizedRequestedValue)) {
-    return 85
-  }
-  if (normalizedSku && normalizedRequestedValue && normalizedSku.includes(normalizedRequestedValue)) {
-    return 75
-  }
   if (normalizedTitle && normalizedTitle === normalizedRequestedValue) {
     return 70
   }
@@ -762,9 +775,6 @@ const scoreVariantCandidate = (variant: ShopifyResolvedVariant, requestedValue: 
 const getCandidateMatchKind = (score: number): ShopifyCandidateMatchKind | null => {
   if (score >= 90) {
     return "sku_exact"
-  }
-  if (score === 85 || score === 75) {
-    return "sku_partial"
   }
   if (score === 88 || score === 70) {
     return "title_exact"
@@ -837,7 +847,7 @@ const fetchAllProductVariants = async (
   let after: string | null = null
 
   while (hasNextPage) {
-    const result = await client.request<ShopifyProductVariantsPage>(SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY, {
+    const result: ShopifyGraphQLResponse<ShopifyProductVariantsPage> = await client.request<ShopifyProductVariantsPage>(SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY, {
       variables: {
         productId,
         after,
@@ -848,7 +858,7 @@ const fetchAllProductVariants = async (
       throw new Error(formatShopifyErrors(result.errors))
     }
 
-    const page = result.data?.product?.variants
+    const page: NonNullable<ShopifyProductVariantsPage["product"]>["variants"] | undefined = result.data?.product?.variants
     variants.push(...toArray<ShopifyProductVariantNode>(page?.nodes))
     hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
     after = page?.pageInfo?.endCursor ?? null
@@ -867,7 +877,7 @@ const fetchAllSkuCandidates = async (client: ShopifyGraphQLClient, requestedValu
   let after: string | null = null
 
   while (hasNextPage) {
-    const result = await client.request<ShopifyVariantLookupPage>(SHOPIFY_VARIANT_BY_SKU_QUERY, {
+    const result: ShopifyGraphQLResponse<ShopifyVariantLookupPage> = await client.request<ShopifyVariantLookupPage>(SHOPIFY_VARIANT_BY_SKU_QUERY, {
       variables: {
         skuQuery,
         after,
@@ -878,7 +888,7 @@ const fetchAllSkuCandidates = async (client: ShopifyGraphQLClient, requestedValu
       throw new Error(formatShopifyErrors(result.errors))
     }
 
-    const page = result.data?.productVariants
+    const page: ShopifyVariantLookupPage["productVariants"] | undefined = result.data?.productVariants
     skuVariants.push(
       ...toArray<NonNullable<NonNullable<ShopifyVariantLookupPage["productVariants"]>["nodes"]>[number]>(
         page?.nodes,
@@ -897,7 +907,7 @@ const fetchAllProductSearchResults = async (client: ShopifyGraphQLClient, titleQ
   let after: string | null = null
 
   while (hasNextPage && products.length < SHOPIFY_TITLE_SEARCH_LIMIT) {
-    const result = await client.request<ShopifyProductsByTitlePage>(SHOPIFY_PRODUCTS_BY_TITLE_QUERY, {
+    const result: ShopifyGraphQLResponse<ShopifyProductsByTitlePage> = await client.request<ShopifyProductsByTitlePage>(SHOPIFY_PRODUCTS_BY_TITLE_QUERY, {
       variables: {
         titleQuery,
         after,
@@ -908,7 +918,7 @@ const fetchAllProductSearchResults = async (client: ShopifyGraphQLClient, titleQ
       throw new Error(formatShopifyErrors(result.errors))
     }
 
-    const page = result.data?.products
+    const page: ShopifyProductsByTitlePage["products"] | undefined = result.data?.products
     products.push(...toArray<ShopifyProductByTitle>(page?.nodes))
     hasNextPage = Boolean(page?.pageInfo?.hasNextPage) && products.length < SHOPIFY_TITLE_SEARCH_LIMIT
     after = page?.pageInfo?.endCursor ?? null
@@ -998,7 +1008,7 @@ const resolveShopifyVariantSelection = async (
 
   if (scoredCandidates.length === 0) {
     throw new Error(
-      `No Shopify SKU or product title match was found for "${requestedValue}". Ask the user to confirm the exact SKU or product title.`,
+      `Ask the user to confirm the exact SKU or full product title for "${requestedValue}". No matching Shopify product was found.`,
     )
   }
 
@@ -1015,31 +1025,24 @@ const resolveShopifyVariantSelection = async (
   if (bestMatchKind === "title_fuzzy" && distinctProductKeys.length > 1) {
     const productChoices = dedupeProductChoices(bestCandidates)
     throw new Error(
-      `Related Shopify products matched "${requestedValue}". Ask the user to choose one exact SKU or full product title: ${formatChoiceList(productChoices)}.`,
+      `Ask the user to choose one exact SKU or full product title for "${requestedValue}": ${formatChoiceList(productChoices)}.`,
     )
   }
 
   if (distinctProductKeys.length > 1) {
     const productChoices = dedupeProductChoices(bestCandidates)
     throw new Error(
-      `Multiple Shopify products matched "${requestedValue}". Ask the user to choose one exact SKU or full product title: ${formatChoiceList(productChoices)}.`,
+      `Ask the user to choose one exact SKU or full product title for "${requestedValue}": ${formatChoiceList(productChoices)}.`,
     )
   }
 
   const resolvedProductKey = distinctProductKeys[0]
   const winningCandidate = bestCandidates[0]
-  const isSkuMatch = bestMatchKind === "sku_exact" || bestMatchKind === "sku_partial"
-
-  if (bestMatchKind === "sku_partial" && titleCandidates.length > 0) {
-    const productChoices = dedupeProductChoices([...bestCandidates, ...titleCandidates])
-    throw new Error(
-      `Multiple Shopify matches were found for "${requestedValue}". Ask the user to choose one exact SKU or full product title: ${formatChoiceList(productChoices)}.`,
-    )
-  }
+  const isSkuMatch = bestMatchKind === "sku_exact"
 
   if (isSkuMatch && bestCandidates.length > 1) {
     throw new Error(
-      `Multiple Shopify variants matched "${requestedValue}". Ask the user to choose one exact SKU: ${formatChoiceList(bestCandidates.map(candidate => candidate.variant))}.`,
+      `Ask the user to choose one exact SKU for "${requestedValue}": ${formatChoiceList(bestCandidates.map(candidate => candidate.variant))}.`,
     )
   }
 
@@ -1100,7 +1103,7 @@ const fetchShopifyDailySalesBySku = async (
   }
 
   while (hasNextPage) {
-    const result = await client.request<ShopifyOrdersWithLineItemsPage>(
+    const result: ShopifyGraphQLResponse<ShopifyOrdersWithLineItemsPage> = await client.request<ShopifyOrdersWithLineItemsPage>(
       SHOPIFY_ORDERS_WITH_LINE_ITEMS_PAGE_QUERY,
       {
         variables: {
@@ -1114,7 +1117,7 @@ const fetchShopifyDailySalesBySku = async (
       throw new Error(formatShopifyErrors(result.errors))
     }
 
-    const page = result.data?.orders
+    const page: ShopifyOrdersWithLineItemsPage["orders"] | undefined = result.data?.orders
     const orders = toArray<ShopifyOrderWithLineItems>(page?.nodes)
 
     for (const order of orders) {
@@ -1387,168 +1390,29 @@ const formatInventoryLookup = (input: {
     .filter(Boolean)
     .join("\n")
 
-const campaignDiscountBand = (objective: string, margin: number) => {
-  if (objective !== "clear_inventory") {
-    return margin >= 30 ? "5%-10%" : "0%-8%"
-  }
-
-  if (margin >= 35) {
-    return "12%-18%"
-  }
-  if (margin >= 25) {
-    return "8%-12%"
-  }
-  return "5%-8%"
-}
-
 const formatObjectiveLabel = (objective: string) =>
   objective
     .split("_")
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
 
-const buildCampaignPlan = (input: {
+const formatCampaignContext = (input: {
   objective: string
   heroSku: string
   productName?: string
+  channel: string
   currentMarginPct: number
   inventoryDaysLeft: number
-  channel: string
   constraint?: string
-  targetMarginFloorPct: number
-  lowInventoryDays: number
   source?: string
   storeName?: string
   lookbackDays?: number
   currencyCode?: string | null
   averageUnitPrice?: number
   averageUnitCost?: number | null
+  targetMarginFloorPct: number
 }) => {
-  const discountBand = campaignDiscountBand(input.objective, input.currentMarginPct)
   const marginBuffer = input.currentMarginPct - input.targetMarginFloorPct
-  const inventoryPressure =
-    input.inventoryDaysLeft <= input.lowInventoryDays
-      ? "tight"
-      : input.inventoryDaysLeft <= 30
-        ? "moderate"
-        : "comfortable"
-  const stockPosture =
-    inventoryPressure === "tight"
-      ? `Stock posture: ${input.heroSku} is running tight on cover, so clearance should stay controlled until replenishment visibility is clear.`
-      : inventoryPressure === "moderate"
-        ? `Stock posture: ${input.heroSku} has enough cover for a controlled clearance push, but avoid broad discounting that drains stock too fast.`
-        : `Stock posture: ${input.heroSku} has comfortable cover, so you can test clearance pressure without forcing an immediate deep discount.`
-
-  const offerLines: Record<string, string[]> = {
-    clear_inventory: [
-      `Run a time-boxed offer for ${input.heroSku} with a planned discount band of ${discountBand}.`,
-      "Set a hard stop date so the campaign feels finite rather than permanently discounted.",
-      "Add a bundle or buy-more-save-more option to raise units per order without forcing the deepest price cut.",
-    ],
-    grow_revenue: [
-      `Lead with a value-first offer on ${input.heroSku} and keep discounting in the ${discountBand} band.`,
-      "Use bundle or threshold offers to lift AOV before widening spend.",
-      "Protect margin by testing one offer at a time instead of stacking incentives.",
-    ],
-    launch_product: [
-      `Anchor the launch around one clear promise for ${input.heroSku}, with an opening offer in the ${discountBand} band.`,
-      "Sequence teaser, proof, and urgency rather than running one generic launch ad set.",
-      "Keep traffic concentrated on one hero landing experience until the conversion story is proven.",
-    ],
-    recover_conversion: [
-      `Use a light incentive in the ${discountBand} band only after fixing the offer and landing page for ${input.heroSku}.`,
-      "Prioritize trust, proof, and checkout clarity before increasing spend.",
-      "Run a simple A/B test between one proof-led angle and one urgency-led angle.",
-    ],
-  }
-
-  const audienceLines: Record<string, string[]> = {
-    clear_inventory: [
-      "Prioritize retargeting: product viewers, add-to-cart users, and recent engaged visitors.",
-      "Test a warm lookalike only after retargeting frequency and conversion are healthy.",
-      "Exclude recent purchasers unless the offer is a bundle or repeat-buy use case.",
-    ],
-    grow_revenue: [
-      "Split budget between proven warm audiences and one controlled prospecting segment.",
-      "Build a repeat-purchase audience if the SKU has complementary accessories.",
-      "Exclude low-intent traffic pools that have already absorbed spend without converting.",
-    ],
-    launch_product: [
-      "Start with warm traffic and creator/proof audiences before scaling to broad acquisition.",
-      "Use one narrow prospecting audience built around the clearest use case.",
-      "Refresh exclusions weekly so launch spend does not keep chasing the same non-buyers.",
-    ],
-    recover_conversion: [
-      "Keep spend on warm intent audiences until the PDP and offer stop leaking conversion.",
-      "Use cart abandoners and high-time-on-site visitors as the primary recovery pool.",
-      "Pause weak prospecting sets until the conversion baseline improves.",
-    ],
-  }
-
-  const creativeLines: Record<string, string[]> = {
-    clear_inventory: [
-      "Lead with inventory urgency, offer clarity, and one practical usage angle.",
-      "Show the product quickly and put the price or savings in the first frame.",
-      "Prepare one static proof ad and one short-motion variant for Meta testing.",
-    ],
-    grow_revenue: [
-      "Focus creative on value, outcomes, and what makes the SKU worth buying now.",
-      "Use social proof and product detail before introducing any incentive.",
-      "Match the landing page headline to the exact ad promise.",
-    ],
-    launch_product: [
-      "Use one hero creative that explains the product in under 10 seconds.",
-      "Support it with proof content such as demos, reviews, or creator endorsements.",
-      "Keep the CTA consistent across ad, PDP, and checkout entry.",
-    ],
-    recover_conversion: [
-      "Simplify messaging to one promise and one CTA per asset.",
-      "Add trust builders: reviews, shipping clarity, and returns reassurance.",
-      "Mirror the ad promise on the landing page to reduce drop-off.",
-    ],
-  }
-
-  const budgetLines =
-    input.objective === "clear_inventory"
-      ? [
-          "Start with roughly 70%-80% of spend on retargeting and existing demand capture.",
-          "Keep prospecting to a small test budget until the clearance offer proves efficient.",
-          "Increase budget only when inventory is moving and blended efficiency stays within target.",
-        ]
-      : [
-          "Keep the first week budget concentrated on the highest-signal audience and one test lane.",
-          "Avoid scaling more than one variable at a time across audience, offer, and creative.",
-          "Move budget toward the best converting segment after each weekly review.",
-        ]
-
-  const guardrails = [
-    marginBuffer < 0
-      ? `Current margin is already below the configured floor by ${percentage(Math.abs(marginBuffer))}, so any discount should be narrow and conditional.`
-      : `Current margin leaves roughly ${percentage(marginBuffer)} above the configured floor, which sets the discount room for testing.`,
-    inventoryPressure === "tight"
-      ? "Inventory cover is tight, so cap volume expansion and protect availability while inbound stock is uncertain."
-      : inventoryPressure === "moderate"
-        ? "Inventory cover is workable for a controlled push, but avoid broad discounting that empties stock too fast."
-        : "Inventory cover is comfortable enough for measured testing, but still use a fixed stop date and weekly review.",
-    input.constraint
-      ? `Constraint: ${input.constraint}`
-      : "Constraint: keep execution simple enough to review and adjust every week.",
-  ]
-
-  const kpis =
-    input.objective === "clear_inventory"
-      ? [
-          "Units sold per day for the hero SKU",
-          "Inventory days of cover after the first 7 days",
-          "Blended ROAS or contribution efficiency",
-          "Add-to-cart rate and checkout conversion on the campaign landing path",
-        ]
-      : [
-          "Revenue per session on the campaign path",
-          "Conversion rate by audience segment",
-          "CAC or ROAS against the test threshold",
-          "AOV movement if bundles or threshold offers are in play",
-        ]
 
   return [
     input.source ? `Source: ${input.source}` : null,
@@ -1564,25 +1428,15 @@ const buildCampaignPlan = (input: {
       ? `Average unit cost: ${currency(input.averageUnitCost, input.currencyCode ?? DEFAULT_CONFIG.defaultCurrency, DEFAULT_CONFIG.defaultLocale)}`
       : null,
     input.lookbackDays ? `Sales lookback: last ${input.lookbackDays} days` : null,
-    stockPosture,
+    `Current margin: ${percentage(input.currentMarginPct)}`,
+    `Inventory cover: ${input.inventoryDaysLeft.toFixed(1)} days`,
+    `Margin buffer vs configured floor: ${marginBuffer >= 0 ? "+" : ""}${percentage(marginBuffer)}`,
+    input.constraint ? `Constraint: ${input.constraint}` : null,
     "",
-    "Offer:",
-    ...offerLines[input.objective].map(item => `- ${item}`),
-    "",
-    "Audience:",
-    ...audienceLines[input.objective].map(item => `- ${item}`),
-    "",
-    "Creative:",
-    ...creativeLines[input.objective].map(item => `- ${item}`),
-    "",
-    "Budget and pacing:",
-    ...budgetLines.map(item => `- ${item}`),
-    "",
-    "Guardrails:",
-    ...guardrails.map(item => `- ${item}`),
-    "",
-    "Weekly KPIs:",
-    ...kpis.map(item => `- ${item}`),
+    "Planning context:",
+    "- This tool returns campaign inputs and operating constraints for the campaign-planning skill.",
+    "- Ask the user for any missing required campaign inputs before giving a final plan.",
+    "- Required inputs for a final plan are objective, hero SKU/title, channel, current margin, and inventory cover.",
   ]
     .filter(Boolean)
     .join("\n")
@@ -1679,30 +1533,135 @@ const formatHealthCheck = (input: {
     .join("\n")
 }
 
-export default function register(api: any) {
+const SellerHealthCheckParamsSchema = Type.Object(
+  {
+    storeId: Type.Optional(
+      Type.String({
+        description:
+          "Optional configured store id. If omitted, the tool should use defaultStoreId or the first configured store.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+)
+
+const SellerQuoteBuilderParamsSchema = Type.Object(
+  {
+    buyerName: Type.String(),
+    productName: Type.String(),
+    quantity: Type.Number(),
+    unitCost: Type.Number(),
+    suggestedUnitPrice: Type.Number(),
+    competitorUnitPrice: Type.Optional(Type.Number()),
+    shippingLeadDays: Type.Optional(Type.Number()),
+    paymentTerms: Type.Optional(Type.String()),
+    notes: Type.Optional(Type.String()),
+    tone: Type.Optional(Type.Union([Type.Literal("concise"), Type.Literal("consultative"), Type.Literal("premium")])),
+  },
+  { additionalProperties: false },
+)
+
+const SellerInventoryLookupParamsSchema = Type.Object(
+  {
+    storeId: Type.Optional(
+      Type.String({
+        description:
+          "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
+      }),
+    ),
+    productRef: Type.String({
+      description:
+        "Exact SKU, full product title, or product title keywords to search in Shopify before returning on-hand inventory.",
+    }),
+  },
+  { additionalProperties: false },
+)
+
+const SellerRestockSignalParamsSchema = Type.Object(
+  {
+    storeId: Type.Optional(
+      Type.String({
+        description:
+          "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
+      }),
+    ),
+    sku: Type.String({
+      description:
+        "Exact SKU, full product title, or product title keywords to search in Shopify before calculating restock urgency.",
+    }),
+    onHandUnits: Type.Optional(Type.Number()),
+    dailySalesUnits: Type.Optional(Type.Number()),
+    supplierLeadDays: Type.Optional(Type.Number()),
+    safetyStockDays: Type.Optional(Type.Number()),
+    salesLookbackDays: Type.Optional(Type.Number()),
+  },
+  { additionalProperties: false },
+)
+
+const SellerCampaignPlanParamsSchema = Type.Object(
+  {
+    objective: Type.Union([
+      Type.Literal("clear_inventory"),
+      Type.Literal("grow_revenue"),
+      Type.Literal("launch_product"),
+      Type.Literal("recover_conversion"),
+    ]),
+    storeId: Type.Optional(
+      Type.String({
+        description:
+          "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
+      }),
+    ),
+    heroSku: Type.String({
+      description:
+        "Exact SKU, full product title, or product title keywords to search in Shopify before loading campaign planning context.",
+      }),
+    currentMarginPct: Type.Optional(
+      Type.Number({
+        description:
+          "Optional manual gross margin override. Use only when Shopify cannot calculate margin from price and unit cost.",
+      }),
+    ),
+    inventoryDaysLeft: Type.Optional(
+      Type.Number({
+        description:
+          "Optional manual inventory cover override. Normally this should be calculated from Shopify inventory and recent sales.",
+      }),
+    ),
+    channel: Type.String({
+      description: "Primary campaign channel, for example Meta ads, Google Shopping, or email.",
+    }),
+    constraint: Type.Optional(Type.String()),
+    salesLookbackDays: Type.Optional(
+      Type.Number({
+        description:
+          "Optional sales lookback window for Shopify data loading. If omitted, use the configured default lookback window.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+)
+
+type SellerHealthCheckParams = Static<typeof SellerHealthCheckParamsSchema>
+type SellerQuoteBuilderParams = Static<typeof SellerQuoteBuilderParamsSchema>
+type SellerInventoryLookupParams = Static<typeof SellerInventoryLookupParamsSchema>
+type SellerRestockSignalParams = Static<typeof SellerRestockSignalParamsSchema>
+type SellerCampaignPlanParams = Static<typeof SellerCampaignPlanParamsSchema>
+
+export default function register(api: OpenClawPluginApi) {
   const pluginConfig = toPluginConfig(api)
 
   api.registerTool({
     name: "seller_health_check",
+    label: "Seller Health Check",
     description:
       "Check store health for a configured store. If storeId is omitted, use the configured default store. If no configured store is available, prompt the user to configure a store first.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        storeId: {
-          type: "string",
-          description:
-            "Optional configured store id. If omitted, the tool should use defaultStoreId or the first configured store.",
-        },
-      },
-      required: [],
-    },
-    async execute(_id: string, params: any) {
+    parameters: SellerHealthCheckParamsSchema,
+    async execute(_id: string, params: SellerHealthCheckParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
         throw new Error(
-          "No configured store was found. Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_health_check.",
+          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_health_check.",
         )
       }
 
@@ -1719,29 +1678,11 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "seller_quote_builder",
+    label: "Seller Quote Builder",
     description:
       "Draft a seller-side RFQ or buyer reply with price guardrails, SLA, and commercial terms.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        buyerName: { type: "string" },
-        productName: { type: "string" },
-        quantity: { type: "number" },
-        unitCost: { type: "number" },
-        suggestedUnitPrice: { type: "number" },
-        competitorUnitPrice: { type: "number" },
-        shippingLeadDays: { type: "number" },
-        paymentTerms: { type: "string" },
-        notes: { type: "string" },
-        tone: {
-          type: "string",
-          enum: ["concise", "consultative", "premium"],
-        },
-      },
-      required: ["buyerName", "productName", "quantity", "unitCost", "suggestedUnitPrice"],
-    },
-    async execute(_id: string, params: any) {
+    parameters: SellerQuoteBuilderParamsSchema,
+    async execute(_id: string, params: SellerQuoteBuilderParams) {
       const unitCost = toNumber(params.unitCost)
       const suggestedUnitPrice = toNumber(params.suggestedUnitPrice)
       const competitorUnitPrice = toNumber(params.competitorUnitPrice, suggestedUnitPrice)
@@ -1789,30 +1730,15 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "seller_inventory_lookup",
+    label: "Seller Inventory Lookup",
     description:
-      "Look up current on-hand inventory for an exact SKU, a partial SKU, or product title keywords. Use this when the user asks how much inventory a product has. Try the tool before asking for an exact SKU. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. This tool reads Shopify inventory only and does not require order access.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        storeId: {
-          type: "string",
-          description:
-            "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
-        },
-        productRef: {
-          type: "string",
-          description:
-            "Exact SKU, partial SKU, full product title, or product title keywords to search in Shopify before returning on-hand inventory.",
-        },
-      },
-      required: ["productRef"],
-    },
-    async execute(_id: string, params: any) {
+      "Look up current on-hand inventory for an exact SKU or product title search. Use this when the user asks how much inventory a product has. Try the tool before asking for an exact SKU. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. This tool reads Shopify inventory only and does not require order access.",
+    parameters: SellerInventoryLookupParamsSchema,
+    async execute(_id: string, params: SellerInventoryLookupParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
         throw new Error(
-          "No configured store was found. Configure a store in plugins.entries.seller-assistant.config before running seller_inventory_lookup.",
+          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_inventory_lookup.",
         )
       }
 
@@ -1829,31 +1755,11 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "seller_restock_signal",
+    label: "Seller Restock Signal",
     description:
-      "Estimate restock urgency for an exact SKU, a partial SKU, or product title keywords. Try the tool before asking for an exact SKU. If inventory or sales inputs are omitted, load them from a configured Shopify store. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. Only ask for supplierLeadDays or safetyStockDays if they are still missing after checking plugin config.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        storeId: {
-          type: "string",
-          description:
-            "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
-        },
-        sku: {
-          type: "string",
-          description:
-            "Exact SKU, partial SKU, full product title, or product title keywords to search in Shopify before calculating restock urgency.",
-        },
-        onHandUnits: { type: "number" },
-        dailySalesUnits: { type: "number" },
-        supplierLeadDays: { type: "number" },
-        safetyStockDays: { type: "number" },
-        salesLookbackDays: { type: "number" },
-      },
-      required: ["sku"],
-    },
-    async execute(_id: string, params: any) {
+      "Estimate restock urgency for an exact SKU or product title search. Try the tool before asking for an exact SKU. If inventory or sales inputs are omitted, load them from a configured Shopify store. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. Only ask for supplierLeadDays or safetyStockDays if they are still missing after checking plugin config.",
+    parameters: SellerRestockSignalParamsSchema,
+    async execute(_id: string, params: SellerRestockSignalParams) {
       const supplierLeadDays =
         optionalNumber(params.supplierLeadDays) ??
         optionalNumber(pluginConfig.defaultSupplierLeadDays)
@@ -1870,23 +1776,23 @@ export default function register(api: any) {
 
       if (supplierLeadDays === null) {
         throw new Error(
-          'Missing supplierLeadDays. Ask the user for supplier lead time in days, or configure "defaultSupplierLeadDays" in the plugin config.',
+          'Ask the user for supplier lead time in days, or configure "defaultSupplierLeadDays" in the plugin config.',
         )
       }
       if (supplierLeadDays <= 0) {
         throw new Error(
-          `Invalid supplierLeadDays: ${supplierLeadDays}. Ask the user to provide a value greater than 0.`,
+          `Ask the user to provide a supplier lead time greater than 0 days. The current value is ${supplierLeadDays}.`,
         )
       }
 
       if (safetyStockDays === null) {
         throw new Error(
-          'Missing safetyStockDays. Ask the user for safety stock in days, or configure "defaultSafetyStockDays" in the plugin config.',
+          'Ask the user for safety stock in days, or configure "defaultSafetyStockDays" in the plugin config.',
         )
       }
       if (safetyStockDays < 0) {
         throw new Error(
-          `Invalid safetyStockDays: ${safetyStockDays}. Ask the user to provide a value greater than or equal to 0.`,
+          `Ask the user to provide a safety stock value greater than or equal to 0 days. The current value is ${safetyStockDays}.`,
         )
       }
 
@@ -1906,19 +1812,19 @@ export default function register(api: any) {
 
       if (hasManualInventory && !hasManualSales && !configuredStore) {
         throw new Error(
-          "Missing dailySalesUnits. Ask the user for average daily sales, or configure a Shopify store so the tool can load sales automatically.",
+          "Ask the user for average daily sales, or configure a Shopify store so sales can be loaded automatically.",
         )
       }
 
       if (!hasManualInventory && hasManualSales && !configuredStore) {
         throw new Error(
-          "Missing onHandUnits. Ask the user for current on-hand inventory, or configure a Shopify store so the tool can load inventory automatically.",
+          "Ask the user for current on-hand inventory, or configure a Shopify store so inventory can be loaded automatically.",
         )
       }
 
       if (!configuredStore) {
         throw new Error(
-          "No configured store was found. Provide manual inventory and sales inputs, or configure a store in plugins.entries.seller-assistant.config.",
+          "Ask the user either to provide inventory and sales inputs manually, or to configure a store in plugins.entries.seller-assistant.config.",
         )
       }
 
@@ -1961,51 +1867,12 @@ export default function register(api: any) {
   })
 
   api.registerTool({
-    name: "seller_campaign_plan",
+    name: "seller_campaign_context",
+    label: "Seller Campaign Context",
     description:
-      "Generate a practical seller-side campaign plan for an exact SKU, a partial SKU, or product title keywords. Try the tool before asking for an exact SKU. Prefer loading inventory cover and recent sales from a configured Shopify store. Do not ask for inventoryDaysLeft before trying the tool. Only ask the user for currentMarginPct if Shopify cost data is unavailable. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        objective: {
-          type: "string",
-          enum: ["clear_inventory", "grow_revenue", "launch_product", "recover_conversion"],
-        },
-        storeId: {
-          type: "string",
-          description:
-            "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
-        },
-        heroSku: {
-          type: "string",
-          description:
-            "Exact SKU, partial SKU, full product title, or product title keywords to search in Shopify before generating the campaign plan.",
-        },
-        currentMarginPct: {
-          type: "number",
-          description:
-            "Optional manual gross margin override. Use only when Shopify cannot calculate margin from price and unit cost.",
-        },
-        inventoryDaysLeft: {
-          type: "number",
-          description:
-            "Optional manual inventory cover override. Normally this should be calculated from Shopify inventory and recent sales.",
-        },
-        channel: {
-          type: "string",
-          description: "Primary campaign channel, for example Meta ads, Google Shopping, or email.",
-        },
-        constraint: { type: "string" },
-        salesLookbackDays: {
-          type: "number",
-          description:
-            "Optional sales lookback window for Shopify data loading. If omitted, use the configured default lookback window.",
-        },
-      },
-      required: ["objective", "heroSku", "channel"],
-    },
-    async execute(_id: string, params: any) {
+      "Load campaign planning context for an exact SKU or product title search. Use this before drafting a final campaign recommendation. Prefer loading inventory cover and recent sales from a configured Shopify store. Ask the user for any required missing campaign inputs before giving the final plan. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
+    parameters: SellerCampaignPlanParamsSchema,
+    async execute(_id: string, params: SellerCampaignPlanParams) {
       const salesLookbackDays = Math.max(
         1,
         Math.round(toNumber(params.salesLookbackDays, pluginConfig.defaultSalesLookbackDays)),
@@ -2015,7 +1882,7 @@ export default function register(api: any) {
 
       if (hasManualMargin && hasManualInventoryDays) {
         return textResult(
-          buildCampaignPlan({
+          formatCampaignContext({
             objective: params.objective,
             heroSku: params.heroSku,
             currentMarginPct: requireNonNegativeNumber(
@@ -2029,33 +1896,32 @@ export default function register(api: any) {
             channel: params.channel,
             constraint: params.constraint,
             targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
-          lowInventoryDays: pluginConfig.lowInventoryDays,
-        }),
-      )
+          }),
+        )
       }
 
       if (hasManualMargin && !hasManualInventoryDays && !findConfiguredStore(pluginConfig, params.storeId)) {
         throw new Error(
-          "Missing inventoryDaysLeft. Ask the user for current inventory cover in days, or configure a Shopify store so the tool can load it automatically.",
+          "To continue the campaign plan, ask the user for current inventory cover in days, or use a configured Shopify store so it can be loaded automatically.",
         )
       }
 
       if (!hasManualMargin && hasManualInventoryDays && !findConfiguredStore(pluginConfig, params.storeId)) {
         throw new Error(
-          "Missing currentMarginPct. Ask the user for the current gross margin percentage, or configure a Shopify store with product cost data so the tool can calculate it automatically.",
+          "To continue the campaign plan, ask the user for the current gross margin percentage, or use a configured Shopify store with product cost data so it can be calculated automatically.",
         )
       }
 
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
         throw new Error(
-          "No configured store was found. Provide manual margin and inventory inputs, or configure a store in plugins.entries.seller-assistant.config.",
+          "Ask the user either to provide margin and inventory inputs manually, or to configure a store in plugins.entries.seller-assistant.config.",
         )
       }
 
       if (configuredStore.platform !== "shopify") {
         throw new Error(
-          `seller_campaign_plan data loading is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+          `seller_campaign_context data loading is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
         )
       }
 
@@ -2075,12 +1941,12 @@ export default function register(api: any) {
 
       if (resolvedCurrentMarginPct === null) {
         throw new Error(
-          `Unable to calculate margin for SKU "${params.heroSku}" from Shopify data. Provide currentMarginPct manually or ensure the variant has both price and unit cost.`,
+          `Ask the user for the current gross margin % for "${params.heroSku}". If they do not know it, ask for unit cost and selling price so margin can be calculated.`,
         )
       }
 
       return textResult(
-        buildCampaignPlan({
+        formatCampaignContext({
           objective: params.objective,
           heroSku: params.heroSku,
           currentMarginPct: resolvedCurrentMarginPct,
@@ -2088,14 +1954,13 @@ export default function register(api: any) {
           productName: snapshot.productName,
           channel: params.channel,
           constraint: params.constraint,
-          targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
-          lowInventoryDays: pluginConfig.lowInventoryDays,
           source: snapshot.source,
           storeName: snapshot.storeName,
           lookbackDays,
           currencyCode: snapshot.currencyCode,
           averageUnitPrice: snapshot.averageUnitPrice,
           averageUnitCost: snapshot.averageUnitCost,
+          targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
         }),
       )
     },
