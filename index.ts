@@ -9,6 +9,7 @@ const DEFAULT_CONFIG = {
   defaultLocale: "en-US",
   targetMarginFloorPct: 20,
   lowInventoryDays: 14,
+  defaultSalesLookbackDays: 30,
   defaultResponseTone: "consultative",
 }
 
@@ -30,6 +31,11 @@ const currency = (
 const toNumber = (value: unknown, fallback = 0) =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback
 
+const optionalNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null
+
+const normalizeSku = (value: string) => value.trim().toLowerCase().replace(/[-_\s]+/g, "")
+
 const toPluginConfig = (api: any) => ({
   ...DEFAULT_CONFIG,
   ...(api?.pluginConfig ?? {}),
@@ -42,6 +48,28 @@ const sum = (values: number[]) => values.reduce((total, value) => total + value,
 const textResult = (text: string) => ({
   content: [{ type: "text", text }],
 })
+
+const requireNonNegativeNumber = (value: unknown, fieldName: string) => {
+  const parsed = optionalNumber(value)
+  if (parsed === null) {
+    throw new Error(`Missing ${fieldName}. Ask the user to provide it.`)
+  }
+  if (parsed < 0) {
+    throw new Error(`Invalid ${fieldName}: ${parsed}. Ask the user to correct it.`)
+  }
+  return parsed
+}
+
+const requirePositiveNumber = (value: unknown, fieldName: string) => {
+  const parsed = optionalNumber(value)
+  if (parsed === null) {
+    throw new Error(`Missing ${fieldName}. Ask the user to provide it.`)
+  }
+  if (parsed <= 0) {
+    throw new Error(`Invalid ${fieldName}: ${parsed}. Ask the user to correct it.`)
+  }
+  return parsed
+}
 
 type ShopifyStoreConfig = {
   id: string
@@ -177,6 +205,118 @@ const SHOPIFY_VARIANTS_PAGE_QUERY = `
   }
 `
 
+const SHOPIFY_VARIANT_BY_SKU_QUERY = `
+  query SellerVariantBySku($skuQuery: String!, $after: String) {
+    productVariants(first: 250, query: $skuQuery, after: $after) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        sku
+        displayName
+        price
+        inventoryQuantity
+        inventoryItem {
+          unitCost {
+            amount
+            currencyCode
+          }
+        }
+        product {
+          id
+          title
+        }
+      }
+    }
+  }
+`
+
+const SHOPIFY_ORDERS_WITH_LINE_ITEMS_PAGE_QUERY = `
+  query SellerOrdersWithLineItemsPage($ordersQuery: String!, $after: String) {
+    orders(first: 250, after: $after, query: $ordersQuery, sortKey: CREATED_AT, reverse: true) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        lineItems(first: 250) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          nodes {
+            sku
+            name
+            quantity
+          }
+        }
+      }
+    }
+  }
+`
+
+const SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY = `
+  query SellerOrderLineItemsPage($orderId: ID!, $after: String) {
+    order(id: $orderId) {
+      lineItems(first: 250, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          sku
+          name
+          quantity
+        }
+      }
+    }
+  }
+`
+
+const SHOPIFY_PRODUCTS_BY_TITLE_QUERY = `
+  query SellerProductsByTitle($titleQuery: String!) {
+    products(first: 10, query: $titleQuery) {
+      nodes {
+        id
+        title
+      }
+    }
+  }
+`
+
+const SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY = `
+  query SellerProductVariantsPage($productId: ID!, $after: String) {
+    product(id: $productId) {
+      variants(first: 250, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          sku
+          displayName
+          price
+          inventoryQuantity
+          inventoryItem {
+            unitCost {
+              amount
+              currencyCode
+            }
+          }
+          product {
+            id
+            title
+          }
+        }
+      }
+    }
+  }
+`
+
 const SHOPIFY_LOCALES_QUERY = `
   query SellerHealthLocales {
     shopLocales(first: 10) {
@@ -236,6 +376,120 @@ type ShopifyVariantsPage = {
     nodes?: Array<{
       inventoryQuantity?: number | null
     }>
+  }
+}
+
+type ShopifyVariantLookupPage = {
+  productVariants?: {
+    pageInfo?: {
+      hasNextPage?: boolean
+      endCursor?: string | null
+    }
+    nodes?: Array<{
+      id?: string
+      sku?: string | null
+      displayName?: string | null
+      price?: string | null
+      inventoryQuantity?: number | null
+      inventoryItem?: {
+        unitCost?: {
+          amount?: string | null
+          currencyCode?: string | null
+        } | null
+      } | null
+      product?: {
+        id?: string | null
+        title?: string | null
+      }
+    }>
+  }
+}
+
+type ShopifyOrdersWithLineItemsPage = {
+  orders?: {
+    pageInfo?: {
+      hasNextPage?: boolean
+      endCursor?: string | null
+    }
+    nodes?: Array<{
+      id?: string | null
+      lineItems?: {
+        pageInfo?: {
+          hasNextPage?: boolean
+          endCursor?: string | null
+        }
+        nodes?: Array<{
+          sku?: string | null
+          name?: string | null
+          quantity?: number | null
+        }>
+      }
+    }>
+  }
+}
+
+type ShopifyOrderLineItemsPage = {
+  order?: {
+    lineItems?: {
+      pageInfo?: {
+        hasNextPage?: boolean
+        endCursor?: string | null
+      }
+      nodes?: Array<{
+        sku?: string | null
+        name?: string | null
+        quantity?: number | null
+      }>
+    }
+  }
+}
+
+type ShopifyProductsByTitlePage = {
+  products?: {
+    nodes?: Array<{
+      id?: string
+      title?: string | null
+    }>
+  }
+}
+
+type ShopifyProductVariantsPage = {
+  product?: {
+    variants?: {
+      pageInfo?: {
+        hasNextPage?: boolean
+        endCursor?: string | null
+      }
+      nodes?: Array<{
+        id?: string
+        sku?: string | null
+        displayName?: string | null
+        price?: string | null
+        inventoryQuantity?: number | null
+        inventoryItem?: {
+          unitCost?: {
+            amount?: string | null
+            currencyCode?: string | null
+          } | null
+        } | null
+        product?: {
+          id?: string | null
+          title?: string | null
+        }
+      }>
+    }
+  }
+}
+
+type ShopifyProductByTitle = NonNullable<NonNullable<ShopifyProductsByTitlePage["products"]>["nodes"]>[number]
+
+type ShopifyProductVariantNode = NonNullable<
+  NonNullable<NonNullable<ShopifyProductVariantsPage["product"]>["variants"]>["nodes"]
+>[number]
+
+type ShopifyProductWithVariants = ShopifyProductByTitle & {
+  variants?: {
+    nodes?: ShopifyProductVariantNode[]
   }
 }
 
@@ -393,6 +647,797 @@ const loadShopifyHealthSnapshot = async (store: ShopifyStoreConfig) => {
     previousUnitsSold,
     previousDailyUnits,
   }
+}
+
+const listCandidateSkus = (variants: Array<{ sku?: string | null }>) =>
+  variants
+    .map(variant => variant?.sku?.trim())
+    .filter((value): value is string => Boolean(value))
+
+type ShopifyResolvedVariant =
+  | NonNullable<NonNullable<ShopifyVariantLookupPage["productVariants"]>["nodes"]>[number]
+  | ShopifyProductVariantNode
+
+type ShopifyResolvedCandidate = {
+  variant: ShopifyResolvedVariant
+  productKey: string
+}
+
+type ShopifyVariantSelection = {
+  variants: ShopifyResolvedVariant[]
+  resolvedSku: string
+  resolvedSkus: string[]
+  matchNames: string[]
+}
+
+type ShopifyOrderWithLineItems = NonNullable<
+  NonNullable<ShopifyOrdersWithLineItemsPage["orders"]>["nodes"]
+>[number]
+
+type ShopifyInitialOrderLineItem = NonNullable<
+  NonNullable<ShopifyOrderWithLineItems["lineItems"]>["nodes"]
+>[number]
+
+type ShopifyPaginatedOrderLineItem = NonNullable<
+  NonNullable<NonNullable<ShopifyOrderLineItemsPage["order"]>["lineItems"]>["nodes"]
+>[number]
+
+const formatVariantChoice = (variant: ShopifyResolvedVariant) => {
+  const sku = variant?.sku?.trim() || "no-sku"
+  const title = variant?.product?.title?.trim() || variant?.displayName?.trim() || sku
+  return `${sku} (${title})`
+}
+
+const scoreVariantCandidate = (variant: ShopifyResolvedVariant, requestedValue: string) => {
+  const normalizedRequestedValue = normalizeSku(requestedValue)
+  const requestedValueTrimmed = requestedValue.trim().toLowerCase()
+  const sku = variant?.sku?.trim() ?? ""
+  const title = variant?.product?.title?.trim() ?? variant?.displayName?.trim() ?? ""
+  const normalizedSku = sku ? normalizeSku(sku) : ""
+  const normalizedTitle = title ? normalizeSku(title) : ""
+
+  if (sku && sku === requestedValue) {
+    return 100
+  }
+  if (normalizedSku && normalizedSku === normalizedRequestedValue) {
+    return 90
+  }
+  if (title && title.toLowerCase() === requestedValueTrimmed) {
+    return 88
+  }
+  if (normalizedSku && normalizedRequestedValue && normalizedSku.startsWith(normalizedRequestedValue)) {
+    return 85
+  }
+  if (normalizedSku && normalizedRequestedValue && normalizedSku.includes(normalizedRequestedValue)) {
+    return 75
+  }
+  if (normalizedTitle && normalizedTitle === normalizedRequestedValue) {
+    return 70
+  }
+  if (normalizedTitle && normalizedRequestedValue && normalizedTitle.startsWith(normalizedRequestedValue)) {
+    return 60
+  }
+  if (normalizedTitle && normalizedRequestedValue && normalizedTitle.includes(normalizedRequestedValue)) {
+    return 50
+  }
+  return 0
+}
+
+const getVariantKey = (variant: ShopifyResolvedVariant) =>
+  variant?.id?.trim() ||
+  `${variant?.sku?.trim() ?? ""}:${variant?.product?.id?.trim() ?? ""}:${variant?.product?.title?.trim() ?? variant?.displayName?.trim() ?? ""}`
+
+const getProductKey = (variant: ShopifyResolvedVariant) =>
+  variant?.product?.id?.trim() ||
+  variant?.product?.title?.trim() ||
+  variant?.displayName?.trim() ||
+  variant?.sku?.trim() ||
+  variant?.id?.trim() ||
+  "unknown-product"
+
+const dedupeCandidates = (candidates: ShopifyResolvedCandidate[]) => {
+  const seen = new Set<string>()
+  return candidates.filter(candidate => {
+    const key = getVariantKey(candidate.variant)
+    if (!key || seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+const fetchAllProductVariants = async (
+  client: ShopifyGraphQLClient,
+  product: ShopifyProductByTitle,
+): Promise<ShopifyProductWithVariants> => {
+  const productId = product?.id?.trim()
+  if (!productId) {
+    return {
+      ...product,
+      variants: { nodes: [] },
+    }
+  }
+
+  const variants: ShopifyProductVariantNode[] = []
+  let hasNextPage = true
+  let after: string | null = null
+
+  while (hasNextPage) {
+    const result = await client.request<ShopifyProductVariantsPage>(SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY, {
+      variables: {
+        productId,
+        after,
+      },
+    })
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.product?.variants
+    variants.push(...toArray<ShopifyProductVariantNode>(page?.nodes))
+    hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+    after = page?.pageInfo?.endCursor ?? null
+  }
+
+  return {
+    ...product,
+    variants: { nodes: variants },
+  }
+}
+
+const fetchAllSkuCandidates = async (client: ShopifyGraphQLClient, requestedValue: string) => {
+  const skuQuery = `sku:${JSON.stringify(requestedValue)}`
+  const skuVariants: NonNullable<NonNullable<ShopifyVariantLookupPage["productVariants"]>["nodes"]> = []
+  let hasNextPage = true
+  let after: string | null = null
+
+  while (hasNextPage) {
+    const result = await client.request<ShopifyVariantLookupPage>(SHOPIFY_VARIANT_BY_SKU_QUERY, {
+      variables: {
+        skuQuery,
+        after,
+      },
+    })
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.productVariants
+    skuVariants.push(
+      ...toArray<NonNullable<NonNullable<ShopifyVariantLookupPage["productVariants"]>["nodes"]>[number]>(
+        page?.nodes,
+      ),
+    )
+    hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+    after = page?.pageInfo?.endCursor ?? null
+  }
+
+  return skuVariants
+}
+
+const collectTitleCandidates = async (client: ShopifyGraphQLClient, title: string) => {
+  const skuVariants = await fetchAllSkuCandidates(client, title)
+  const titleResult = await client.request<ShopifyProductsByTitlePage>(SHOPIFY_PRODUCTS_BY_TITLE_QUERY, {
+    variables: {
+      titleQuery: `title:${JSON.stringify(title)}`,
+    },
+  })
+
+  if (titleResult.errors) {
+    throw new Error(formatShopifyErrors(titleResult.errors))
+  }
+
+  const products = await Promise.all(
+    toArray<ShopifyProductByTitle>(titleResult.data?.products?.nodes).map(product =>
+      fetchAllProductVariants(client, product),
+    ),
+  )
+  const titleVariants = products.flatMap(product =>
+    toArray<ShopifyProductVariantNode>(product?.variants?.nodes).map(variant => ({
+      variant,
+      productKey: product?.id?.trim() || product?.title?.trim() || getProductKey(variant),
+    })),
+  )
+
+  return dedupeCandidates([
+    ...skuVariants.map(variant => ({
+      variant,
+      productKey: getProductKey(variant),
+    })),
+    ...titleVariants,
+  ])
+}
+
+const resolveShopifyVariantSelection = async (
+  client: ShopifyGraphQLClient,
+  requestedValue: string,
+): Promise<ShopifyVariantSelection> => {
+  const candidates = await collectTitleCandidates(client, requestedValue)
+  if (candidates.length === 0) {
+    throw new Error(`No Shopify product variant was found for "${requestedValue}".`)
+  }
+
+  const scoredCandidates = candidates
+    .map(candidate => ({
+      ...candidate,
+      score: scoreVariantCandidate(candidate.variant, requestedValue),
+    }))
+    .filter(candidate => candidate.score > 0)
+    .sort((left, right) => right.score - left.score)
+
+  if (scoredCandidates.length === 0) {
+    throw new Error(
+      `No Shopify SKU or product title match was found for "${requestedValue}". Ask the user to confirm the exact SKU or product title.`,
+    )
+  }
+
+  const bestScore = scoredCandidates[0].score
+  const bestCandidates = scoredCandidates.filter(candidate => candidate.score === bestScore)
+  const distinctProductKeys = [...new Set(bestCandidates.map(candidate => candidate.productKey))]
+
+  if (distinctProductKeys.length > 1) {
+    const productChoices = [...new Map(bestCandidates.map(candidate => [candidate.productKey, candidate.variant])).values()]
+    throw new Error(
+      `Multiple Shopify products matched "${requestedValue}". Ask the user to choose one: ${productChoices.map(variant => formatVariantChoice(variant)).join(", ")}.`,
+    )
+  }
+
+  const resolvedProductKey = distinctProductKeys[0]
+  const winningCandidate = bestCandidates[0]
+  const isSkuMatchScore = bestScore >= 90 || bestScore === 85 || bestScore === 75
+
+  if (isSkuMatchScore && bestCandidates.length > 1) {
+    throw new Error(
+      `Multiple Shopify variants matched "${requestedValue}". Ask the user to choose one exact SKU: ${bestCandidates.map(candidate => formatVariantChoice(candidate.variant)).join(", ")}.`,
+    )
+  }
+
+  const resolvedVariants = isSkuMatchScore
+    ? [winningCandidate.variant]
+    : candidates
+        .filter(candidate => candidate.productKey === resolvedProductKey)
+        .map(candidate => candidate.variant)
+  const resolvedSkus = [...new Set(listCandidateSkus(resolvedVariants))]
+  const resolvedVariant = resolvedVariants[0]
+  const matchNames = [
+    ...new Set(
+      resolvedVariants
+        .flatMap(variant => [variant?.product?.title?.trim(), variant?.displayName?.trim()])
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ]
+
+  return {
+    variants: resolvedVariants,
+    resolvedSku: resolvedSkus.length === 1 ? resolvedSkus[0] : requestedValue,
+    resolvedSkus: resolvedSkus.length > 0 ? resolvedSkus : [requestedValue],
+    matchNames,
+  }
+}
+
+const fetchShopifyVariantBySku = async (client: ShopifyGraphQLClient, sku: string) => {
+  return (await resolveShopifyVariantSelection(client, sku)).variants
+}
+
+const fetchShopifyDailySalesBySku = async (
+  client: ShopifyGraphQLClient,
+  selection: Pick<ShopifyVariantSelection, "resolvedSkus" | "matchNames">,
+  lookbackDays: number,
+) => {
+  const normalizedRequestedSkus = new Set(
+    selection.resolvedSkus.map(value => normalizeSku(value)).filter(Boolean),
+  )
+  const normalizedMatchNames = selection.matchNames.map(value => normalizeSku(value)).filter(Boolean)
+  const range = getDateRange(lookbackDays, 0)
+  const ordersQuery = `created_at:>=${range.start} created_at:<${range.end} financial_status:paid`
+  let hasNextPage = true
+  let after: string | null = null
+  let unitsSold = 0
+
+  const matchesLineItem = (line: { sku?: string | null; name?: string | null }) => {
+    const normalizedLineSku = line?.sku ? normalizeSku(line.sku) : ""
+    if (normalizedLineSku && normalizedRequestedSkus.has(normalizedLineSku)) {
+      return true
+    }
+
+    const normalizedLineName = line?.name ? normalizeSku(line.name) : ""
+    if (!normalizedLineName) {
+      return false
+    }
+
+    return normalizedMatchNames.some(candidateName => normalizedLineName === candidateName)
+  }
+
+  while (hasNextPage) {
+    const result = await client.request<ShopifyOrdersWithLineItemsPage>(
+      SHOPIFY_ORDERS_WITH_LINE_ITEMS_PAGE_QUERY,
+      {
+        variables: {
+          ordersQuery,
+          after,
+        },
+      },
+    )
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.orders
+    const orders = toArray<ShopifyOrderWithLineItems>(page?.nodes)
+
+    for (const order of orders) {
+      const initialLineItems = order?.lineItems
+      const initialOrderLineItems = toArray<ShopifyInitialOrderLineItem>(initialLineItems?.nodes)
+      unitsSold += sum(
+        initialOrderLineItems
+          .filter(matchesLineItem)
+          .map(line => toNumber(line?.quantity)),
+      )
+
+      let hasMoreLineItems = Boolean(initialLineItems?.pageInfo?.hasNextPage)
+      let lineItemsAfter = initialLineItems?.pageInfo?.endCursor ?? null
+      const orderId = order?.id?.trim()
+
+      while (hasMoreLineItems && orderId) {
+        const lineItemsResult = await client.request<ShopifyOrderLineItemsPage>(
+          SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY,
+          {
+            variables: {
+              orderId,
+              after: lineItemsAfter,
+            },
+          },
+        )
+
+        if (lineItemsResult.errors) {
+          throw new Error(formatShopifyErrors(lineItemsResult.errors))
+        }
+
+        const lineItemsPage = lineItemsResult.data?.order?.lineItems
+        const pagedLineItems = toArray<ShopifyPaginatedOrderLineItem>(lineItemsPage?.nodes)
+        unitsSold += sum(
+          pagedLineItems
+            .filter(matchesLineItem)
+            .map(line => toNumber(line?.quantity)),
+        )
+
+        hasMoreLineItems = Boolean(lineItemsPage?.pageInfo?.hasNextPage)
+        lineItemsAfter = lineItemsPage?.pageInfo?.endCursor ?? null
+      }
+    }
+
+    hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+    after = page?.pageInfo?.endCursor ?? null
+  }
+
+  return unitsSold / lookbackDays
+}
+
+const loadShopifyRestockSnapshotFromClient = async (
+  client: ShopifyGraphQLClient,
+  store: ShopifyStoreConfig,
+  sku: string,
+  lookbackDays: number,
+) => {
+  const selection = await resolveShopifyVariantSelection(client, sku)
+  const [variants, dailySalesUnits] = await Promise.all([
+    Promise.resolve(selection.variants),
+    fetchShopifyDailySalesBySku(client, selection, lookbackDays),
+  ])
+
+  const onHandUnits = sum(variants.map(variant => toNumber(variant?.inventoryQuantity)))
+  const firstVariant = variants[0]
+
+  return {
+    source: "shopify",
+    storeName: store.name,
+    sku: selection.resolvedSku,
+    productName:
+      firstVariant?.product?.title ?? firstVariant?.displayName ?? firstVariant?.sku ?? selection.resolvedSku,
+    onHandUnits,
+    dailySalesUnits,
+    lookbackDays,
+  }
+}
+
+const loadShopifyInventorySnapshotFromClient = async (
+  client: ShopifyGraphQLClient,
+  store: ShopifyStoreConfig,
+  productRef: string,
+) => {
+  const selection = await resolveShopifyVariantSelection(client, productRef)
+  const variants = selection.variants
+  const onHandUnits = sum(variants.map(variant => toNumber(variant?.inventoryQuantity)))
+  const firstVariant = variants[0]
+
+  return {
+    source: "shopify",
+    storeName: store.name,
+    sku: selection.resolvedSku,
+    productName:
+      firstVariant?.product?.title ??
+      firstVariant?.displayName ??
+      firstVariant?.sku ??
+      selection.resolvedSku,
+    onHandUnits,
+  }
+}
+
+const loadShopifyInventorySnapshot = async (store: ShopifyStoreConfig, productRef: string) => {
+  const client = await createShopifyClient(store)
+  return loadShopifyInventorySnapshotFromClient(client, store, productRef)
+}
+
+const summarizeShopifyVariantPricing = (variants: ShopifyResolvedVariant[]) => {
+  const pricedVariants = variants.filter(variant => toNumber(Number(variant?.price), 0) > 0)
+  const averageUnitPrice =
+    pricedVariants.length > 0
+      ? sum(pricedVariants.map(variant => Number(variant?.price ?? 0))) / pricedVariants.length
+      : 0
+  const costAmounts = pricedVariants.map(variant => {
+    const unitCost = variant?.inventoryItem?.unitCost?.amount
+    const parsedUnitCost = unitCost ? Number(unitCost) : NaN
+    return Number.isFinite(parsedUnitCost) && parsedUnitCost > 0 ? parsedUnitCost : null
+  })
+  const hasCompleteCostCoverage =
+    pricedVariants.length > 0 && costAmounts.every((value): value is number => value !== null)
+  const averageUnitCost =
+    hasCompleteCostCoverage && costAmounts.length > 0 ? sum(costAmounts) / costAmounts.length : null
+  const currentMarginPct =
+    averageUnitPrice > 0 && averageUnitCost !== null
+      ? ((averageUnitPrice - averageUnitCost) / averageUnitPrice) * 100
+      : null
+
+  return {
+    averageUnitPrice,
+    averageUnitCost,
+    currentMarginPct,
+  }
+}
+
+const loadShopifyProductSnapshotFromClient = async (
+  client: ShopifyGraphQLClient,
+  store: ShopifyStoreConfig,
+  productRef: string,
+) => {
+  const selection = await resolveShopifyVariantSelection(client, productRef)
+  const variants = selection.variants
+  const firstVariant = variants[0]
+  const shopResult = await client.request<{
+    shop?: { currencyCode?: string | null }
+  }>(SHOPIFY_SHOP_QUERY)
+
+  if (shopResult.errors) {
+    throw new Error(formatShopifyErrors(shopResult.errors))
+  }
+
+  return {
+    source: "shopify",
+    storeName: store.name,
+    sku: selection.resolvedSku,
+    productName:
+      firstVariant?.product?.title ?? firstVariant?.displayName ?? firstVariant?.sku ?? selection.resolvedSku,
+    onHandUnits: sum(variants.map(variant => toNumber(variant?.inventoryQuantity))),
+    currencyCode: shopResult.data?.shop?.currencyCode ?? null,
+    ...summarizeShopifyVariantPricing(variants),
+  }
+}
+
+const loadShopifyRestockSnapshot = async (
+  store: ShopifyStoreConfig,
+  sku: string,
+  lookbackDays: number,
+) => {
+  const client = await createShopifyClient(store)
+  return loadShopifyRestockSnapshotFromClient(client, store, sku, lookbackDays)
+}
+
+const loadShopifyCampaignSnapshot = async (
+  store: ShopifyStoreConfig,
+  sku: string,
+  lookbackDays: number,
+) => {
+  const client = await createShopifyClient(store)
+  const snapshot = await loadShopifyRestockSnapshotFromClient(client, store, sku, lookbackDays)
+  const productSnapshot = await loadShopifyProductSnapshotFromClient(client, store, snapshot.sku)
+  const inventoryDaysLeft =
+    snapshot.dailySalesUnits > 0 ? snapshot.onHandUnits / snapshot.dailySalesUnits : 999
+
+  return {
+    ...snapshot,
+    currencyCode: productSnapshot.currencyCode,
+    currentMarginPct: productSnapshot.currentMarginPct,
+    inventoryDaysLeft,
+    averageUnitPrice: productSnapshot.averageUnitPrice,
+    averageUnitCost: productSnapshot.averageUnitCost,
+  }
+}
+
+const evaluateRestockSignal = (input: {
+  sku: string
+  onHandUnits: number
+  dailySalesUnits: number
+  supplierLeadDays: number
+  safetyStockDays: number
+  source?: string
+  storeName?: string
+  productName?: string
+  lookbackDays?: number
+}) => {
+  const dailySalesUnits = Math.max(input.dailySalesUnits, 0)
+  const reorderPointUnits = (input.supplierLeadDays + input.safetyStockDays) * dailySalesUnits
+  const daysLeft =
+    dailySalesUnits > 0 ? input.onHandUnits / dailySalesUnits : Number.POSITIVE_INFINITY
+  const urgency =
+    dailySalesUnits <= 0
+      ? "normal"
+      : daysLeft <= input.supplierLeadDays
+        ? "critical"
+        : daysLeft <= input.supplierLeadDays + input.safetyStockDays
+          ? "high"
+          : "normal"
+
+  const action =
+    dailySalesUnits <= 0
+      ? "Action: no recent sales were detected for this SKU, so verify demand before placing a replenishment order."
+      : urgency === "critical"
+        ? "Action: place a replenishment order now and throttle demand on this SKU."
+        : urgency === "high"
+          ? "Action: start replenishment this cycle and avoid discounting until inbound stock is confirmed."
+          : "Action: inventory posture is acceptable; keep monitoring weekly."
+
+  return {
+    ...input,
+    dailySalesUnits,
+    reorderPointUnits,
+    daysLeft,
+    urgency,
+    action,
+  }
+}
+
+const formatRestockSignal = (input: ReturnType<typeof evaluateRestockSignal>) =>
+  [
+    input.source ? `Source: ${input.source}` : null,
+    input.storeName ? `Store: ${input.storeName}` : null,
+    input.productName ? `Product: ${input.productName}` : null,
+    `SKU: ${input.sku}`,
+    `On-hand units: ${Math.round(input.onHandUnits)}`,
+    `Average daily sales: ${input.dailySalesUnits.toFixed(2)}`,
+    Number.isFinite(input.daysLeft)
+      ? `Days of cover: ${input.daysLeft.toFixed(1)}`
+      : "Days of cover: n/a (no recent sales detected)",
+    `Supplier lead time: ${input.supplierLeadDays} days`,
+    `Safety stock: ${input.safetyStockDays} days`,
+    `Reorder point: ${Math.ceil(input.reorderPointUnits)} units`,
+    input.lookbackDays ? `Sales lookback: last ${input.lookbackDays} days` : null,
+    `Urgency: ${input.urgency}`,
+    "",
+    input.action,
+  ]
+    .filter(Boolean)
+    .join("\n")
+
+const formatInventoryLookup = (input: {
+  source?: string
+  storeName?: string
+  productName?: string
+  sku: string
+  onHandUnits: number
+}) =>
+  [
+    input.source ? `Source: ${input.source}` : null,
+    input.storeName ? `Store: ${input.storeName}` : null,
+    input.productName ? `Product: ${input.productName}` : null,
+    `SKU: ${input.sku}`,
+    `On-hand units: ${Math.round(input.onHandUnits)}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+
+const campaignDiscountBand = (objective: string, margin: number) => {
+  if (objective !== "clear_inventory") {
+    return margin >= 30 ? "5%-10%" : "0%-8%"
+  }
+
+  if (margin >= 35) {
+    return "12%-18%"
+  }
+  if (margin >= 25) {
+    return "8%-12%"
+  }
+  return "5%-8%"
+}
+
+const formatObjectiveLabel = (objective: string) =>
+  objective
+    .split("_")
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ")
+
+const buildCampaignPlan = (input: {
+  objective: string
+  heroSku: string
+  productName?: string
+  currentMarginPct: number
+  inventoryDaysLeft: number
+  channel: string
+  constraint?: string
+  targetMarginFloorPct: number
+  lowInventoryDays: number
+  source?: string
+  storeName?: string
+  lookbackDays?: number
+  currencyCode?: string | null
+  averageUnitPrice?: number
+  averageUnitCost?: number | null
+}) => {
+  const discountBand = campaignDiscountBand(input.objective, input.currentMarginPct)
+  const marginBuffer = input.currentMarginPct - input.targetMarginFloorPct
+  const inventoryPressure =
+    input.inventoryDaysLeft <= input.lowInventoryDays
+      ? "tight"
+      : input.inventoryDaysLeft <= 30
+        ? "moderate"
+        : "comfortable"
+  const stockPosture =
+    inventoryPressure === "tight"
+      ? `Stock posture: ${input.heroSku} is running tight on cover, so clearance should stay controlled until replenishment visibility is clear.`
+      : inventoryPressure === "moderate"
+        ? `Stock posture: ${input.heroSku} has enough cover for a controlled clearance push, but avoid broad discounting that drains stock too fast.`
+        : `Stock posture: ${input.heroSku} has comfortable cover, so you can test clearance pressure without forcing an immediate deep discount.`
+
+  const offerLines: Record<string, string[]> = {
+    clear_inventory: [
+      `Run a time-boxed offer for ${input.heroSku} with a planned discount band of ${discountBand}.`,
+      "Set a hard stop date so the campaign feels finite rather than permanently discounted.",
+      "Add a bundle or buy-more-save-more option to raise units per order without forcing the deepest price cut.",
+    ],
+    grow_revenue: [
+      `Lead with a value-first offer on ${input.heroSku} and keep discounting in the ${discountBand} band.`,
+      "Use bundle or threshold offers to lift AOV before widening spend.",
+      "Protect margin by testing one offer at a time instead of stacking incentives.",
+    ],
+    launch_product: [
+      `Anchor the launch around one clear promise for ${input.heroSku}, with an opening offer in the ${discountBand} band.`,
+      "Sequence teaser, proof, and urgency rather than running one generic launch ad set.",
+      "Keep traffic concentrated on one hero landing experience until the conversion story is proven.",
+    ],
+    recover_conversion: [
+      `Use a light incentive in the ${discountBand} band only after fixing the offer and landing page for ${input.heroSku}.`,
+      "Prioritize trust, proof, and checkout clarity before increasing spend.",
+      "Run a simple A/B test between one proof-led angle and one urgency-led angle.",
+    ],
+  }
+
+  const audienceLines: Record<string, string[]> = {
+    clear_inventory: [
+      "Prioritize retargeting: product viewers, add-to-cart users, and recent engaged visitors.",
+      "Test a warm lookalike only after retargeting frequency and conversion are healthy.",
+      "Exclude recent purchasers unless the offer is a bundle or repeat-buy use case.",
+    ],
+    grow_revenue: [
+      "Split budget between proven warm audiences and one controlled prospecting segment.",
+      "Build a repeat-purchase audience if the SKU has complementary accessories.",
+      "Exclude low-intent traffic pools that have already absorbed spend without converting.",
+    ],
+    launch_product: [
+      "Start with warm traffic and creator/proof audiences before scaling to broad acquisition.",
+      "Use one narrow prospecting audience built around the clearest use case.",
+      "Refresh exclusions weekly so launch spend does not keep chasing the same non-buyers.",
+    ],
+    recover_conversion: [
+      "Keep spend on warm intent audiences until the PDP and offer stop leaking conversion.",
+      "Use cart abandoners and high-time-on-site visitors as the primary recovery pool.",
+      "Pause weak prospecting sets until the conversion baseline improves.",
+    ],
+  }
+
+  const creativeLines: Record<string, string[]> = {
+    clear_inventory: [
+      "Lead with inventory urgency, offer clarity, and one practical usage angle.",
+      "Show the product quickly and put the price or savings in the first frame.",
+      "Prepare one static proof ad and one short-motion variant for Meta testing.",
+    ],
+    grow_revenue: [
+      "Focus creative on value, outcomes, and what makes the SKU worth buying now.",
+      "Use social proof and product detail before introducing any incentive.",
+      "Match the landing page headline to the exact ad promise.",
+    ],
+    launch_product: [
+      "Use one hero creative that explains the product in under 10 seconds.",
+      "Support it with proof content such as demos, reviews, or creator endorsements.",
+      "Keep the CTA consistent across ad, PDP, and checkout entry.",
+    ],
+    recover_conversion: [
+      "Simplify messaging to one promise and one CTA per asset.",
+      "Add trust builders: reviews, shipping clarity, and returns reassurance.",
+      "Mirror the ad promise on the landing page to reduce drop-off.",
+    ],
+  }
+
+  const budgetLines =
+    input.objective === "clear_inventory"
+      ? [
+          "Start with roughly 70%-80% of spend on retargeting and existing demand capture.",
+          "Keep prospecting to a small test budget until the clearance offer proves efficient.",
+          "Increase budget only when inventory is moving and blended efficiency stays within target.",
+        ]
+      : [
+          "Keep the first week budget concentrated on the highest-signal audience and one test lane.",
+          "Avoid scaling more than one variable at a time across audience, offer, and creative.",
+          "Move budget toward the best converting segment after each weekly review.",
+        ]
+
+  const guardrails = [
+    marginBuffer < 0
+      ? `Current margin is already below the configured floor by ${percentage(Math.abs(marginBuffer))}, so any discount should be narrow and conditional.`
+      : `Current margin leaves roughly ${percentage(marginBuffer)} above the configured floor, which sets the discount room for testing.`,
+    inventoryPressure === "tight"
+      ? "Inventory cover is tight, so cap volume expansion and protect availability while inbound stock is uncertain."
+      : inventoryPressure === "moderate"
+        ? "Inventory cover is workable for a controlled push, but avoid broad discounting that empties stock too fast."
+        : "Inventory cover is comfortable enough for measured testing, but still use a fixed stop date and weekly review.",
+    input.constraint
+      ? `Constraint: ${input.constraint}`
+      : "Constraint: keep execution simple enough to review and adjust every week.",
+  ]
+
+  const kpis =
+    input.objective === "clear_inventory"
+      ? [
+          "Units sold per day for the hero SKU",
+          "Inventory days of cover after the first 7 days",
+          "Blended ROAS or contribution efficiency",
+          "Add-to-cart rate and checkout conversion on the campaign landing path",
+        ]
+      : [
+          "Revenue per session on the campaign path",
+          "Conversion rate by audience segment",
+          "CAC or ROAS against the test threshold",
+          "AOV movement if bundles or threshold offers are in play",
+        ]
+
+  return [
+    input.source ? `Source: ${input.source}` : null,
+    input.storeName ? `Store: ${input.storeName}` : null,
+    `Objective: ${formatObjectiveLabel(input.objective)}`,
+    `Hero SKU: ${input.heroSku}`,
+    input.productName ? `Product: ${input.productName}` : null,
+    `Primary channel: ${input.channel}`,
+    typeof input.averageUnitPrice === "number" && input.averageUnitPrice > 0
+      ? `Average unit price: ${currency(input.averageUnitPrice, input.currencyCode ?? DEFAULT_CONFIG.defaultCurrency, DEFAULT_CONFIG.defaultLocale)}`
+      : null,
+    typeof input.averageUnitCost === "number" && input.averageUnitCost > 0
+      ? `Average unit cost: ${currency(input.averageUnitCost, input.currencyCode ?? DEFAULT_CONFIG.defaultCurrency, DEFAULT_CONFIG.defaultLocale)}`
+      : null,
+    input.lookbackDays ? `Sales lookback: last ${input.lookbackDays} days` : null,
+    stockPosture,
+    "",
+    "Offer:",
+    ...offerLines[input.objective].map(item => `- ${item}`),
+    "",
+    "Audience:",
+    ...audienceLines[input.objective].map(item => `- ${item}`),
+    "",
+    "Creative:",
+    ...creativeLines[input.objective].map(item => `- ${item}`),
+    "",
+    "Budget and pacing:",
+    ...budgetLines.map(item => `- ${item}`),
+    "",
+    "Guardrails:",
+    ...guardrails.map(item => `- ${item}`),
+    "",
+    "Weekly KPIs:",
+    ...kpis.map(item => `- ${item}`),
+  ]
+    .filter(Boolean)
+    .join("\n")
 }
 
 const formatHealthCheck = (input: {
@@ -595,52 +1640,174 @@ export default function register(api: any) {
   })
 
   api.registerTool({
-    name: "seller_restock_signal",
+    name: "seller_inventory_lookup",
     description:
-      "Estimate restock urgency from inventory, daily sales, supplier lead time, and safety stock.",
+      "Look up current on-hand inventory for an exact SKU, a partial SKU, or a unique product title. Use this when the user asks how much inventory a product has. Try the tool before asking for an exact SKU. Only ask the user to confirm the exact SKU if the tool reports multiple matches or cannot uniquely identify the product. This tool reads Shopify inventory only and does not require order access.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
-        sku: { type: "string" },
+        storeId: {
+          type: "string",
+          description:
+            "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
+        },
+        productRef: {
+          type: "string",
+          description:
+            "Exact SKU, partial SKU, or unique product title to resolve against Shopify before returning on-hand inventory.",
+        },
+      },
+      required: ["productRef"],
+    },
+    async execute(_id: string, params: any) {
+      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
+      if (!configuredStore) {
+        throw new Error(
+          "No configured store was found. Configure a store in plugins.entries.seller-assistant.config before running seller_inventory_lookup.",
+        )
+      }
+
+      if (configuredStore.platform !== "shopify") {
+        throw new Error(
+          `seller_inventory_lookup is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+        )
+      }
+
+      const snapshot = await loadShopifyInventorySnapshot(configuredStore.store, params.productRef)
+      return textResult(formatInventoryLookup(snapshot))
+    },
+  })
+
+  api.registerTool({
+    name: "seller_restock_signal",
+    description:
+      "Estimate restock urgency for an exact SKU, a partial SKU, or a unique product title. Try the tool before asking for an exact SKU. If inventory or sales inputs are omitted, load them from a configured Shopify store. Only ask the user to confirm the exact SKU if the tool reports multiple matches or cannot uniquely identify the product. Only ask for supplierLeadDays or safetyStockDays if they are still missing after checking plugin config.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        storeId: {
+          type: "string",
+          description:
+            "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
+        },
+        sku: {
+          type: "string",
+          description:
+            "Exact SKU, partial SKU, or unique product title to resolve against Shopify before calculating restock urgency.",
+        },
         onHandUnits: { type: "number" },
         dailySalesUnits: { type: "number" },
         supplierLeadDays: { type: "number" },
         safetyStockDays: { type: "number" },
+        salesLookbackDays: { type: "number" },
       },
-      required: ["sku", "onHandUnits", "dailySalesUnits", "supplierLeadDays"],
+      required: ["sku"],
     },
     async execute(_id: string, params: any) {
-      const onHandUnits = toNumber(params.onHandUnits)
-      const dailySalesUnits = Math.max(toNumber(params.dailySalesUnits), 0.0001)
-      const supplierLeadDays = toNumber(params.supplierLeadDays)
-      const safetyStockDays = toNumber(params.safetyStockDays, 7)
-      const daysLeft = onHandUnits / dailySalesUnits
-      const reorderPointUnits = (supplierLeadDays + safetyStockDays) * dailySalesUnits
-      const urgency =
-        daysLeft <= supplierLeadDays
-          ? "critical"
-          : daysLeft <= supplierLeadDays + safetyStockDays
-            ? "high"
-            : "normal"
+      const supplierLeadDays =
+        optionalNumber(params.supplierLeadDays) ??
+        optionalNumber(pluginConfig.defaultSupplierLeadDays)
+      const safetyStockDays =
+        optionalNumber(params.safetyStockDays) ??
+        optionalNumber(pluginConfig.defaultSafetyStockDays)
+      const salesLookbackDays = Math.max(
+        1,
+        Math.round(toNumber(params.salesLookbackDays, pluginConfig.defaultSalesLookbackDays)),
+      )
+      const hasManualInventory = typeof params.onHandUnits === "number"
+      const hasManualSales = typeof params.dailySalesUnits === "number"
+      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
+
+      if (supplierLeadDays === null) {
+        throw new Error(
+          'Missing supplierLeadDays. Ask the user for supplier lead time in days, or configure "defaultSupplierLeadDays" in the plugin config.',
+        )
+      }
+      if (supplierLeadDays <= 0) {
+        throw new Error(
+          `Invalid supplierLeadDays: ${supplierLeadDays}. Ask the user to provide a value greater than 0.`,
+        )
+      }
+
+      if (safetyStockDays === null) {
+        throw new Error(
+          'Missing safetyStockDays. Ask the user for safety stock in days, or configure "defaultSafetyStockDays" in the plugin config.',
+        )
+      }
+      if (safetyStockDays < 0) {
+        throw new Error(
+          `Invalid safetyStockDays: ${safetyStockDays}. Ask the user to provide a value greater than or equal to 0.`,
+        )
+      }
+
+      if (hasManualInventory && hasManualSales) {
+        return textResult(
+          formatRestockSignal(
+            evaluateRestockSignal({
+              sku: params.sku,
+              onHandUnits: requireNonNegativeNumber(params.onHandUnits, "onHandUnits"),
+              dailySalesUnits: requireNonNegativeNumber(params.dailySalesUnits, "dailySalesUnits"),
+              supplierLeadDays,
+              safetyStockDays,
+            }),
+          ),
+        )
+      }
+
+      if (hasManualInventory && !hasManualSales && !configuredStore) {
+        throw new Error(
+          "Missing dailySalesUnits. Ask the user for average daily sales, or configure a Shopify store so the tool can load sales automatically.",
+        )
+      }
+
+      if (!hasManualInventory && hasManualSales && !configuredStore) {
+        throw new Error(
+          "Missing onHandUnits. Ask the user for current on-hand inventory, or configure a Shopify store so the tool can load inventory automatically.",
+        )
+      }
+
+      if (!configuredStore) {
+        throw new Error(
+          "No configured store was found. Provide manual inventory and sales inputs, or configure a store in plugins.entries.seller-assistant.config.",
+        )
+      }
+
+      if (configuredStore.platform !== "shopify") {
+        throw new Error(
+          `seller_restock_signal data loading is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+        )
+      }
+
+      const client = await createShopifyClient(configuredStore.store)
+      const snapshot = hasManualSales && !hasManualInventory
+        ? await loadShopifyInventorySnapshotFromClient(client, configuredStore.store, params.sku)
+        : await loadShopifyRestockSnapshotFromClient(
+            client,
+            configuredStore.store,
+            params.sku,
+            salesLookbackDays,
+          )
+      const onHandUnits = hasManualInventory
+        ? requireNonNegativeNumber(params.onHandUnits, "onHandUnits")
+        : snapshot.onHandUnits
+      const dailySalesUnits = hasManualSales
+        ? requireNonNegativeNumber(params.dailySalesUnits, "dailySalesUnits")
+        : "dailySalesUnits" in snapshot
+          ? toNumber(snapshot.dailySalesUnits)
+          : 0
 
       return textResult(
-        [
-          `SKU: ${params.sku}`,
-          `On-hand units: ${onHandUnits}`,
-          `Average daily sales: ${dailySalesUnits.toFixed(2)}`,
-          `Days of cover: ${daysLeft.toFixed(1)}`,
-          `Supplier lead time: ${supplierLeadDays} days`,
-          `Safety stock: ${safetyStockDays} days`,
-          `Reorder point: ${Math.ceil(reorderPointUnits)} units`,
-          `Urgency: ${urgency}`,
-          "",
-          urgency === "critical"
-            ? "Action: place a replenishment order now and throttle demand on this SKU."
-            : urgency === "high"
-              ? "Action: start replenishment this cycle and avoid discounting until inbound stock is confirmed."
-              : "Action: inventory posture is acceptable; keep monitoring weekly.",
-        ].join("\n"),
+        formatRestockSignal(
+          evaluateRestockSignal({
+            ...snapshot,
+            onHandUnits,
+            dailySalesUnits,
+            supplierLeadDays,
+            safetyStockDays,
+          }),
+        ),
       )
     },
   })
@@ -648,7 +1815,7 @@ export default function register(api: any) {
   api.registerTool({
     name: "seller_campaign_plan",
     description:
-      "Generate a short seller-side campaign plan from objective, offer, and operating constraints.",
+      "Generate a practical seller-side campaign plan for an exact SKU, a partial SKU, or a unique product title. Try the tool before asking for an exact SKU. Prefer loading inventory cover and recent sales from a configured Shopify store. Do not ask for inventoryDaysLeft before trying the tool. Only ask the user for currentMarginPct if Shopify cost data is unavailable. Only ask the user to confirm the exact SKU if the tool reports multiple matches or cannot uniquely identify the product.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -657,65 +1824,131 @@ export default function register(api: any) {
           type: "string",
           enum: ["clear_inventory", "grow_revenue", "launch_product", "recover_conversion"],
         },
-        heroSku: { type: "string" },
-        currentMarginPct: { type: "number" },
-        inventoryDaysLeft: { type: "number" },
-        channel: { type: "string" },
+        storeId: {
+          type: "string",
+          description:
+            "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
+        },
+        heroSku: {
+          type: "string",
+          description:
+            "Exact SKU, partial SKU, or unique product title to resolve against Shopify before generating the campaign plan.",
+        },
+        currentMarginPct: {
+          type: "number",
+          description:
+            "Optional manual gross margin override. Use only when Shopify cannot calculate margin from price and unit cost.",
+        },
+        inventoryDaysLeft: {
+          type: "number",
+          description:
+            "Optional manual inventory cover override. Normally this should be calculated from Shopify inventory and recent sales.",
+        },
+        channel: {
+          type: "string",
+          description: "Primary campaign channel, for example Meta ads, Google Shopping, or email.",
+        },
         constraint: { type: "string" },
+        salesLookbackDays: {
+          type: "number",
+          description:
+            "Optional sales lookback window for Shopify data loading. If omitted, use the configured default lookback window.",
+        },
       },
-      required: ["objective", "heroSku", "currentMarginPct", "inventoryDaysLeft", "channel"],
+      required: ["objective", "heroSku", "channel"],
     },
     async execute(_id: string, params: any) {
-      const margin = toNumber(params.currentMarginPct)
-      const inventoryDaysLeft = toNumber(params.inventoryDaysLeft)
+      const salesLookbackDays = Math.max(
+        1,
+        Math.round(toNumber(params.salesLookbackDays, pluginConfig.defaultSalesLookbackDays)),
+      )
+      const hasManualMargin = typeof params.currentMarginPct === "number"
+      const hasManualInventoryDays = typeof params.inventoryDaysLeft === "number"
 
-      const byObjective: Record<string, string[]> = {
-        clear_inventory: [
-          "Use time-boxed discounts with a hard stop date.",
-          "Bundle the hero SKU with slower-moving accessories.",
-          "Move spend toward retargeting instead of cold acquisition.",
-        ],
-        grow_revenue: [
-          "Lead with value messaging rather than deep discounting.",
-          "Test AOV expansion via bundle and threshold-based offers.",
-          "Keep CAC guardrails visible in the daily operating review.",
-        ],
-        launch_product: [
-          "Sequence launch into teaser, proof, and urgency phases.",
-          "Collect early reviews or creator proof before scaling spend.",
-          "Use tight landing-page narrative around one core use case.",
-        ],
-        recover_conversion: [
-          "Audit landing-page clarity, offer framing, and checkout friction first.",
-          "Run one trust-building creative and one urgency variant in parallel.",
-          "Limit traffic expansion until conversion stabilizes.",
-        ],
+      if (hasManualMargin && hasManualInventoryDays) {
+        return textResult(
+          buildCampaignPlan({
+            objective: params.objective,
+            heroSku: params.heroSku,
+            currentMarginPct: requireNonNegativeNumber(
+              params.currentMarginPct,
+              "currentMarginPct",
+            ),
+            inventoryDaysLeft: requireNonNegativeNumber(
+              params.inventoryDaysLeft,
+              "inventoryDaysLeft",
+            ),
+            channel: params.channel,
+            constraint: params.constraint,
+            targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
+          lowInventoryDays: pluginConfig.lowInventoryDays,
+        }),
+      )
       }
 
-      const riskNotes = [
-        inventoryDaysLeft <= pluginConfig.lowInventoryDays
-          ? "Inventory is tight, so avoid broad promotion without inbound stock visibility."
-          : "Inventory depth is workable for a controlled campaign.",
-        margin < pluginConfig.targetMarginFloorPct
-          ? "Current margin is below the configured floor, so discounting should be narrow and conditional."
-          : "Current margin supports moderate offer testing.",
-        params.constraint
-          ? `Constraint to respect: ${params.constraint}`
-          : "Constraint to respect: keep operations simple enough for weekly review.",
-      ]
+      if (hasManualMargin && !hasManualInventoryDays && !findConfiguredStore(pluginConfig, params.storeId)) {
+        throw new Error(
+          "Missing inventoryDaysLeft. Ask the user for current inventory cover in days, or configure a Shopify store so the tool can load it automatically.",
+        )
+      }
+
+      if (!hasManualMargin && hasManualInventoryDays && !findConfiguredStore(pluginConfig, params.storeId)) {
+        throw new Error(
+          "Missing currentMarginPct. Ask the user for the current gross margin percentage, or configure a Shopify store with product cost data so the tool can calculate it automatically.",
+        )
+      }
+
+      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
+      if (!configuredStore) {
+        throw new Error(
+          "No configured store was found. Provide manual margin and inventory inputs, or configure a store in plugins.entries.seller-assistant.config.",
+        )
+      }
+
+      if (configuredStore.platform !== "shopify") {
+        throw new Error(
+          `seller_campaign_plan data loading is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+        )
+      }
+
+      const client = await createShopifyClient(configuredStore.store)
+      const snapshot = hasManualInventoryDays && !hasManualMargin
+        ? await loadShopifyProductSnapshotFromClient(client, configuredStore.store, params.heroSku)
+        : await loadShopifyCampaignSnapshot(configuredStore.store, params.heroSku, salesLookbackDays)
+      const resolvedCurrentMarginPct = hasManualMargin
+        ? requireNonNegativeNumber(params.currentMarginPct, "currentMarginPct")
+        : optionalNumber(snapshot.currentMarginPct)
+      const resolvedInventoryDaysLeft = hasManualInventoryDays
+        ? requireNonNegativeNumber(params.inventoryDaysLeft, "inventoryDaysLeft")
+        : "inventoryDaysLeft" in snapshot
+          ? toNumber(snapshot.inventoryDaysLeft, 999)
+          : 999
+      const lookbackDays = "lookbackDays" in snapshot ? optionalNumber(snapshot.lookbackDays) ?? undefined : undefined
+
+      if (resolvedCurrentMarginPct === null) {
+        throw new Error(
+          `Unable to calculate margin for SKU "${params.heroSku}" from Shopify data. Provide currentMarginPct manually or ensure the variant has both price and unit cost.`,
+        )
+      }
 
       return textResult(
-        [
-          `Objective: ${params.objective}`,
-          `Hero SKU: ${params.heroSku}`,
-          `Primary channel: ${params.channel}`,
-          "",
-          "Plan:",
-          ...(byObjective[params.objective] ?? byObjective.grow_revenue).map(item => `- ${item}`),
-          "",
-          "Risk notes:",
-          ...riskNotes.map(item => `- ${item}`),
-        ].join("\n"),
+        buildCampaignPlan({
+          objective: params.objective,
+          heroSku: params.heroSku,
+          currentMarginPct: resolvedCurrentMarginPct,
+          inventoryDaysLeft: resolvedInventoryDaysLeft,
+          productName: snapshot.productName,
+          channel: params.channel,
+          constraint: params.constraint,
+          targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
+          lowInventoryDays: pluginConfig.lowInventoryDays,
+          source: snapshot.source,
+          storeName: snapshot.storeName,
+          lookbackDays,
+          currencyCode: snapshot.currencyCode,
+          averageUnitPrice: snapshot.averageUnitPrice,
+          averageUnitCost: snapshot.averageUnitCost,
+        }),
       )
     },
   })

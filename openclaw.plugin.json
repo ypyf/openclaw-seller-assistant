@@ -2,7 +2,7 @@
   "id": "seller-assistant",
   "name": "Seller Assistant",
   "description": "Seller assistant tools for pricing, RFQ replies, inventory checks, and campaign planning.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "skills": [
     "./skills"
   ],
@@ -25,6 +25,18 @@
       "lowInventoryDays": {
         "type": "number",
         "description": "Inventory days-of-cover threshold that triggers low-stock warnings."
+      },
+      "defaultSupplierLeadDays": {
+        "type": "number",
+        "description": "Default supplier lead time in days used by restock checks when the user does not provide one."
+      },
+      "defaultSafetyStockDays": {
+        "type": "number",
+        "description": "Default safety stock buffer in days used by restock checks when the user does not provide one."
+      },
+      "defaultSalesLookbackDays": {
+        "type": "number",
+        "description": "Default lookback window in days used to estimate average daily sales for Shopify-backed restock checks."
       },
       "defaultResponseTone": {
         "type": "string",

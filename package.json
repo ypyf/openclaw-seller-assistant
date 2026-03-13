@@ -1,6 +1,6 @@
 {
   "name": "@planetbee/seller-assistant",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Seller assistant plugin for OpenClaw.",
   "keywords": [
     "openclaw",

@@ -2,12 +2,13 @@
 
 `seller-assistant` is an OpenClaw plugin for merchant operations workflows across commerce platforms. It currently supports Shopify store connectivity, and is designed to expand to additional platforms such as Amazon over time.
 
-It packages four seller tools:
+It packages five seller tools:
 
 - `seller_health_check`: diagnose traffic, conversion, revenue, and inventory signals
+- `seller_inventory_lookup`: look up current on-hand inventory for a SKU or product title
 - `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
 - `seller_restock_signal`: estimate replenishment urgency
-- `seller_campaign_plan`: generate a short campaign plan for a SKU or goal
+- `seller_campaign_plan`: generate a campaign plan for a SKU or goal, using Shopify inventory and recent sales when available
 
 ## Install
 
@@ -51,6 +52,7 @@ If your config uses plugin or tool allowlists, add the plugin id under `plugins.
         "tools": {
           "allow": [
             "seller_health_check",
+            "seller_inventory_lookup",
             "seller_quote_builder",
             "seller_restock_signal",
             "seller_campaign_plan"
@@ -88,6 +90,9 @@ Example:
         "enabled": true,
         "config": {
           "defaultStoreId": "shopify-us",
+          "defaultSupplierLeadDays": 7,
+          "defaultSafetyStockDays": 5,
+          "defaultSalesLookbackDays": 30,
           "stores": {
             "shopify": [
               {
@@ -113,19 +118,19 @@ In that structure:
 
 ## Shopify Auth Model
 
-This plugin uses a `bring your own Shopify app` model:
+This plugin uses a `bring your own Shopify app` model tied to the same organization that owns the target store:
 
 - the merchant creates or uses a Shopify app owned by that merchant's own organization
 - that app is installed on a store the merchant owns
 - the merchant then configures this plugin with that store's `storeDomain`, `clientId`, and `clientSecretEnv`
 
-The plugin requests Admin API access using the merchant's own app credentials.
+The plugin requests Admin API access using the merchant's own app credentials. This is a same-organization app model. It does not require a legacy store-admin custom app, but it does require that the app and the target store belong to the same owner or organization.
 
 ## Shopify Setup
 
 To connect a Shopify store in the current model:
 
-1. Create a Shopify app that belongs to the same merchant organization that owns the target store.
+1. Create or use a Shopify app that belongs to the same merchant organization that owns the target store.
 2. Install that app on the merchant's own Shopify store.
 3. Grant the app at least the Admin API scopes listed below.
 4. Copy the app client id.
@@ -152,6 +157,10 @@ To use `seller_health_check` with Shopify, grant the app at least these Admin AP
 - `read_orders`
 - `read_products`
 
+`seller_inventory_lookup` only needs `read_products`.
+
+`seller_restock_signal` and `seller_campaign_plan` use Shopify inventory and recent sales for a SKU, so they need both `read_products` and `read_orders`.
+
 Current limitations of the Shopify health check:
 
 - traffic, conversion, and ad spend are not currently sourced from Shopify
@@ -163,9 +172,16 @@ After the plugin is loaded and allowed, ask the agent in natural language:
 
 - "Check store health for my default store."
 - "Check store health for store shopify-us."
+- "How much inventory does short sleeve have in my default store?"
+- "Check inventory for SKU WM-01 in store shopify-us."
 - "Draft a quote for Acme for 500 wireless mice. Unit cost is 8, target price is 12, competitor price is 11.5, and lead time is 10 days."
-- "Check whether SKU WM-01 needs restocking. We have 320 units on hand, daily sales are 35, supplier lead time is 7 days, and safety stock is 5 days."
-- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads. Current margin is 28% and inventory cover is 30 days."
+- "Check whether SKU WM-01 needs restocking for my default store."
+- "Check whether Wireless Mouse needs restocking for my default store."
+- "Check whether SKU WM-01 needs restocking for store shopify-us. Use a 21 day sales lookback."
+- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads for my default store."
+- "Create a campaign plan to clear inventory for Wireless Mouse on Meta ads for my default store."
+- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads for store shopify-us. Use a 21 day sales lookback."
+- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads. Current margin is 28%."
 
 ## Notes
 
