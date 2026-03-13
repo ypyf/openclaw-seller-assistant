@@ -769,7 +769,7 @@ const getCandidateMatchKind = (score: number): ShopifyCandidateMatchKind | null 
   if (score === 88 || score === 70) {
     return "title_exact"
   }
-  if (score === 60 || score === 50) {
+  if (score === 68 || score === 66 || score === 64 || score === 60 || score === 50) {
     return "title_fuzzy"
   }
   return null
