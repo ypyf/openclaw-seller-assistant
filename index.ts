@@ -14,6 +14,9 @@ const DEFAULT_CONFIG = {
 }
 
 const SHOPIFY_API_VERSION = "2026-01"
+const SHOPIFY_TITLE_SEARCH_LIMIT = 50
+const SHOPIFY_MATCH_CHOICE_LIMIT = 5
+const SHOPIFY_VARIANT_FETCH_BATCH_SIZE = 5
 
 const percentage = (value: number) => `${value.toFixed(1)}%`
 
@@ -35,6 +38,16 @@ const optionalNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : null
 
 const normalizeSku = (value: string) => value.trim().toLowerCase().replace(/[-_\s]+/g, "")
+const unique = <T>(values: T[]) => [...new Set(values)]
+const tokenizeSearchTerms = (value: string) =>
+  unique(
+    value
+      .trim()
+      .toLowerCase()
+      .split(/[^a-z0-9]+/i)
+      .map(token => token.trim())
+      .filter(Boolean),
+  )
 
 const toPluginConfig = (api: any) => ({
   ...DEFAULT_CONFIG,
@@ -277,8 +290,12 @@ const SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY = `
 `
 
 const SHOPIFY_PRODUCTS_BY_TITLE_QUERY = `
-  query SellerProductsByTitle($titleQuery: String!) {
-    products(first: 10, query: $titleQuery) {
+  query SellerProductsByTitle($titleQuery: String!, $after: String) {
+    products(first: 50, after: $after, query: $titleQuery, sortKey: RELEVANCE) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       nodes {
         id
         title
@@ -446,6 +463,10 @@ type ShopifyOrderLineItemsPage = {
 
 type ShopifyProductsByTitlePage = {
   products?: {
+    pageInfo?: {
+      hasNextPage?: boolean
+      endCursor?: string | null
+    }
     nodes?: Array<{
       id?: string
       title?: string | null
@@ -663,6 +684,8 @@ type ShopifyResolvedCandidate = {
   productKey: string
 }
 
+type ShopifyCandidateMatchKind = "sku_exact" | "sku_partial" | "title_exact" | "title_fuzzy"
+
 type ShopifyVariantSelection = {
   variants: ShopifyResolvedVariant[]
   resolvedSku: string
@@ -691,10 +714,13 @@ const formatVariantChoice = (variant: ShopifyResolvedVariant) => {
 const scoreVariantCandidate = (variant: ShopifyResolvedVariant, requestedValue: string) => {
   const normalizedRequestedValue = normalizeSku(requestedValue)
   const requestedValueTrimmed = requestedValue.trim().toLowerCase()
+  const requestedTokens = tokenizeSearchTerms(requestedValue)
   const sku = variant?.sku?.trim() ?? ""
   const title = variant?.product?.title?.trim() ?? variant?.displayName?.trim() ?? ""
   const normalizedSku = sku ? normalizeSku(sku) : ""
   const normalizedTitle = title ? normalizeSku(title) : ""
+  const titleTokens = tokenizeSearchTerms(title)
+  const matchedTitleTokens = requestedTokens.filter(token => titleTokens.includes(token))
 
   if (sku && sku === requestedValue) {
     return 100
@@ -714,6 +740,16 @@ const scoreVariantCandidate = (variant: ShopifyResolvedVariant, requestedValue: 
   if (normalizedTitle && normalizedTitle === normalizedRequestedValue) {
     return 70
   }
+  if (
+    requestedTokens.length > 1 &&
+    matchedTitleTokens.length === requestedTokens.length &&
+    requestedTokens.every(token => titleTokens.includes(token))
+  ) {
+    return titleTokens.join(" ").includes(requestedTokens.join(" ")) ? 68 : 66
+  }
+  if (requestedTokens.length > 0 && matchedTitleTokens.length === requestedTokens.length) {
+    return 64
+  }
   if (normalizedTitle && normalizedRequestedValue && normalizedTitle.startsWith(normalizedRequestedValue)) {
     return 60
   }
@@ -721,6 +757,22 @@ const scoreVariantCandidate = (variant: ShopifyResolvedVariant, requestedValue: 
     return 50
   }
   return 0
+}
+
+const getCandidateMatchKind = (score: number): ShopifyCandidateMatchKind | null => {
+  if (score >= 90) {
+    return "sku_exact"
+  }
+  if (score === 85 || score === 75) {
+    return "sku_partial"
+  }
+  if (score === 88 || score === 70) {
+    return "title_exact"
+  }
+  if (score === 60 || score === 50) {
+    return "title_fuzzy"
+  }
+  return null
 }
 
 const getVariantKey = (variant: ShopifyResolvedVariant) =>
@@ -745,6 +797,27 @@ const dedupeCandidates = (candidates: ShopifyResolvedCandidate[]) => {
     seen.add(key)
     return true
   })
+}
+
+const dedupeProductChoices = (candidates: Array<{ productKey: string; variant: ShopifyResolvedVariant }>) =>
+  [...new Map(candidates.map(candidate => [candidate.productKey, candidate.variant])).values()]
+
+const formatChoiceList = (variants: ShopifyResolvedVariant[]) =>
+  variants.slice(0, SHOPIFY_MATCH_CHOICE_LIMIT).map(variant => formatVariantChoice(variant)).join(", ")
+
+const runInBatches = async <TInput, TOutput>(
+  items: TInput[],
+  batchSize: number,
+  worker: (item: TInput) => Promise<TOutput>,
+) => {
+  const results: TOutput[] = []
+
+  for (let index = 0; index < items.length; index += batchSize) {
+    const batch = items.slice(index, index + batchSize)
+    results.push(...(await Promise.all(batch.map(item => worker(item)))))
+  }
+
+  return results
 }
 
 const fetchAllProductVariants = async (
@@ -818,23 +891,77 @@ const fetchAllSkuCandidates = async (client: ShopifyGraphQLClient, requestedValu
   return skuVariants
 }
 
-const collectTitleCandidates = async (client: ShopifyGraphQLClient, title: string) => {
-  const skuVariants = await fetchAllSkuCandidates(client, title)
-  const titleResult = await client.request<ShopifyProductsByTitlePage>(SHOPIFY_PRODUCTS_BY_TITLE_QUERY, {
-    variables: {
-      titleQuery: `title:${JSON.stringify(title)}`,
-    },
-  })
+const fetchAllProductSearchResults = async (client: ShopifyGraphQLClient, titleQuery: string) => {
+  const products: ShopifyProductByTitle[] = []
+  let hasNextPage = true
+  let after: string | null = null
 
-  if (titleResult.errors) {
-    throw new Error(formatShopifyErrors(titleResult.errors))
+  while (hasNextPage && products.length < SHOPIFY_TITLE_SEARCH_LIMIT) {
+    const result = await client.request<ShopifyProductsByTitlePage>(SHOPIFY_PRODUCTS_BY_TITLE_QUERY, {
+      variables: {
+        titleQuery,
+        after,
+      },
+    })
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.products
+    products.push(...toArray<ShopifyProductByTitle>(page?.nodes))
+    hasNextPage = Boolean(page?.pageInfo?.hasNextPage) && products.length < SHOPIFY_TITLE_SEARCH_LIMIT
+    after = page?.pageInfo?.endCursor ?? null
   }
 
-  const products = await Promise.all(
-    toArray<ShopifyProductByTitle>(titleResult.data?.products?.nodes).map(product =>
-      fetchAllProductVariants(client, product),
-    ),
+  return products.slice(0, SHOPIFY_TITLE_SEARCH_LIMIT)
+}
+
+const buildTitleKeywordQuery = (requestedValue: string) => {
+  const tokens = tokenizeSearchTerms(requestedValue)
+
+  if (tokens.length === 0) {
+    return ""
+  }
+
+  return tokens.map(token => `title:${JSON.stringify(token)}`).join(" ")
+}
+
+const fetchAllTitleProducts = async (client: ShopifyGraphQLClient, requestedValue: string) => {
+  const trimmedValue = requestedValue.trim()
+  if (!trimmedValue) {
+    return []
+  }
+
+  const exactTitleQuery = `title:${JSON.stringify(trimmedValue)}`
+  const keywordTitleQuery = buildTitleKeywordQuery(trimmedValue)
+  const queryStrings = unique(
+    [exactTitleQuery, keywordTitleQuery].filter((value): value is string => Boolean(value)),
   )
+
+  const products: ShopifyProductByTitle[] = []
+  for (const queryString of queryStrings) {
+    const queryProducts = await fetchAllProductSearchResults(client, queryString)
+    products.push(...queryProducts)
+    if (products.length >= SHOPIFY_TITLE_SEARCH_LIMIT) {
+      break
+    }
+  }
+
+  return [...new Map(products.map(product => [product?.id?.trim() || product?.title?.trim() || "", product])).values()]
+    .filter(product => Boolean(product?.id?.trim() || product?.title?.trim()))
+    .slice(0, SHOPIFY_TITLE_SEARCH_LIMIT)
+}
+
+const collectTitleCandidates = async (client: ShopifyGraphQLClient, title: string) => {
+  const skuVariants = await fetchAllSkuCandidates(client, title)
+  const titleProducts = await fetchAllTitleProducts(client, title)
+  const products = await runInBatches(
+    titleProducts,
+    SHOPIFY_VARIANT_FETCH_BATCH_SIZE,
+    product => fetchAllProductVariants(client, product),
+  )
+
   const titleVariants = products.flatMap(product =>
     toArray<ShopifyProductVariantNode>(product?.variants?.nodes).map(variant => ({
       variant,
@@ -864,6 +991,7 @@ const resolveShopifyVariantSelection = async (
     .map(candidate => ({
       ...candidate,
       score: scoreVariantCandidate(candidate.variant, requestedValue),
+      matchKind: getCandidateMatchKind(scoreVariantCandidate(candidate.variant, requestedValue)),
     }))
     .filter(candidate => candidate.score > 0)
     .sort((left, right) => right.score - left.score)
@@ -876,26 +1004,46 @@ const resolveShopifyVariantSelection = async (
 
   const bestScore = scoredCandidates[0].score
   const bestCandidates = scoredCandidates.filter(candidate => candidate.score === bestScore)
+  const bestMatchKind = getCandidateMatchKind(bestScore)
   const distinctProductKeys = [...new Set(bestCandidates.map(candidate => candidate.productKey))]
+  const titleCandidates = scoredCandidates.filter(
+    candidate =>
+      (candidate.matchKind === "title_exact" || candidate.matchKind === "title_fuzzy") &&
+      !bestCandidates.some(bestCandidate => bestCandidate.productKey === candidate.productKey),
+  )
+
+  if (bestMatchKind === "title_fuzzy" && distinctProductKeys.length > 1) {
+    const productChoices = dedupeProductChoices(bestCandidates)
+    throw new Error(
+      `Related Shopify products matched "${requestedValue}". Ask the user to choose one exact SKU or full product title: ${formatChoiceList(productChoices)}.`,
+    )
+  }
 
   if (distinctProductKeys.length > 1) {
-    const productChoices = [...new Map(bestCandidates.map(candidate => [candidate.productKey, candidate.variant])).values()]
+    const productChoices = dedupeProductChoices(bestCandidates)
     throw new Error(
-      `Multiple Shopify products matched "${requestedValue}". Ask the user to choose one: ${productChoices.map(variant => formatVariantChoice(variant)).join(", ")}.`,
+      `Multiple Shopify products matched "${requestedValue}". Ask the user to choose one exact SKU or full product title: ${formatChoiceList(productChoices)}.`,
     )
   }
 
   const resolvedProductKey = distinctProductKeys[0]
   const winningCandidate = bestCandidates[0]
-  const isSkuMatchScore = bestScore >= 90 || bestScore === 85 || bestScore === 75
+  const isSkuMatch = bestMatchKind === "sku_exact" || bestMatchKind === "sku_partial"
 
-  if (isSkuMatchScore && bestCandidates.length > 1) {
+  if (bestMatchKind === "sku_partial" && titleCandidates.length > 0) {
+    const productChoices = dedupeProductChoices([...bestCandidates, ...titleCandidates])
     throw new Error(
-      `Multiple Shopify variants matched "${requestedValue}". Ask the user to choose one exact SKU: ${bestCandidates.map(candidate => formatVariantChoice(candidate.variant)).join(", ")}.`,
+      `Multiple Shopify matches were found for "${requestedValue}". Ask the user to choose one exact SKU or full product title: ${formatChoiceList(productChoices)}.`,
     )
   }
 
-  const resolvedVariants = isSkuMatchScore
+  if (isSkuMatch && bestCandidates.length > 1) {
+    throw new Error(
+      `Multiple Shopify variants matched "${requestedValue}". Ask the user to choose one exact SKU: ${formatChoiceList(bestCandidates.map(candidate => candidate.variant))}.`,
+    )
+  }
+
+  const resolvedVariants = isSkuMatch
     ? [winningCandidate.variant]
     : candidates
         .filter(candidate => candidate.productKey === resolvedProductKey)
@@ -1642,7 +1790,7 @@ export default function register(api: any) {
   api.registerTool({
     name: "seller_inventory_lookup",
     description:
-      "Look up current on-hand inventory for an exact SKU, a partial SKU, or a unique product title. Use this when the user asks how much inventory a product has. Try the tool before asking for an exact SKU. Only ask the user to confirm the exact SKU if the tool reports multiple matches or cannot uniquely identify the product. This tool reads Shopify inventory only and does not require order access.",
+      "Look up current on-hand inventory for an exact SKU, a partial SKU, or product title keywords. Use this when the user asks how much inventory a product has. Try the tool before asking for an exact SKU. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. This tool reads Shopify inventory only and does not require order access.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -1655,7 +1803,7 @@ export default function register(api: any) {
         productRef: {
           type: "string",
           description:
-            "Exact SKU, partial SKU, or unique product title to resolve against Shopify before returning on-hand inventory.",
+            "Exact SKU, partial SKU, full product title, or product title keywords to search in Shopify before returning on-hand inventory.",
         },
       },
       required: ["productRef"],
@@ -1682,7 +1830,7 @@ export default function register(api: any) {
   api.registerTool({
     name: "seller_restock_signal",
     description:
-      "Estimate restock urgency for an exact SKU, a partial SKU, or a unique product title. Try the tool before asking for an exact SKU. If inventory or sales inputs are omitted, load them from a configured Shopify store. Only ask the user to confirm the exact SKU if the tool reports multiple matches or cannot uniquely identify the product. Only ask for supplierLeadDays or safetyStockDays if they are still missing after checking plugin config.",
+      "Estimate restock urgency for an exact SKU, a partial SKU, or product title keywords. Try the tool before asking for an exact SKU. If inventory or sales inputs are omitted, load them from a configured Shopify store. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. Only ask for supplierLeadDays or safetyStockDays if they are still missing after checking plugin config.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -1695,7 +1843,7 @@ export default function register(api: any) {
         sku: {
           type: "string",
           description:
-            "Exact SKU, partial SKU, or unique product title to resolve against Shopify before calculating restock urgency.",
+            "Exact SKU, partial SKU, full product title, or product title keywords to search in Shopify before calculating restock urgency.",
         },
         onHandUnits: { type: "number" },
         dailySalesUnits: { type: "number" },
@@ -1815,7 +1963,7 @@ export default function register(api: any) {
   api.registerTool({
     name: "seller_campaign_plan",
     description:
-      "Generate a practical seller-side campaign plan for an exact SKU, a partial SKU, or a unique product title. Try the tool before asking for an exact SKU. Prefer loading inventory cover and recent sales from a configured Shopify store. Do not ask for inventoryDaysLeft before trying the tool. Only ask the user for currentMarginPct if Shopify cost data is unavailable. Only ask the user to confirm the exact SKU if the tool reports multiple matches or cannot uniquely identify the product.",
+      "Generate a practical seller-side campaign plan for an exact SKU, a partial SKU, or product title keywords. Try the tool before asking for an exact SKU. Prefer loading inventory cover and recent sales from a configured Shopify store. Do not ask for inventoryDaysLeft before trying the tool. Only ask the user for currentMarginPct if Shopify cost data is unavailable. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -1832,7 +1980,7 @@ export default function register(api: any) {
         heroSku: {
           type: "string",
           description:
-            "Exact SKU, partial SKU, or unique product title to resolve against Shopify before generating the campaign plan.",
+            "Exact SKU, partial SKU, full product title, or product title keywords to search in Shopify before generating the campaign plan.",
         },
         currentMarginPct: {
           type: "number",

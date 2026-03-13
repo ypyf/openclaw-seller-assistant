@@ -5,7 +5,7 @@
 It packages five seller tools:
 
 - `seller_health_check`: diagnose traffic, conversion, revenue, and inventory signals
-- `seller_inventory_lookup`: look up current on-hand inventory for a SKU or product title
+- `seller_inventory_lookup`: look up current on-hand inventory for a SKU or product title search
 - `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
 - `seller_restock_signal`: estimate replenishment urgency
 - `seller_campaign_plan`: generate a campaign plan for a SKU or goal, using Shopify inventory and recent sales when available
@@ -184,6 +184,10 @@ After the plugin is loaded and allowed, ask the agent in natural language:
 - "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads. Current margin is 28%."
 
 ## Notes
+
+- SKU resolution supports exact SKU and partial SKU.
+- Product title resolution supports full titles and title keywords.
+- Ambiguous title-keyword searches return candidate choices instead of auto-selecting a product.
 
 - A next phase can add optional side-effect tools for repricing, inventory sync, or auto-quote dispatch.
 
