@@ -2,6 +2,37 @@ import { createAdminApiClient } from "@shopify/admin-api-client"
 import { Type, type Static } from "@sinclair/typebox"
 import type { AgentToolResult } from "@mariozechner/pi-agent-core"
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
+import {
+  SHOPIFY_LOCALES_QUERY,
+  SHOPIFY_ORDERS_PAGE_QUERY,
+  SHOPIFY_ORDERS_WITH_LINE_ITEMS_PAGE_QUERY,
+  SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY,
+  SHOPIFY_PRODUCTS_BY_TITLE_QUERY,
+  SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY,
+  SHOPIFY_SHOP_QUERY,
+  SHOPIFY_VARIANTS_PAGE_QUERY,
+  SHOPIFY_VARIANT_BY_SKU_QUERY,
+} from "./shopify/queries.js"
+import type {
+  ShopifyGraphQLClient,
+  ShopifyGraphQLResponse,
+  ShopifyInitialOrderLineItem,
+  ShopifyOrderLineItemsPage,
+  ShopifyOrderWithLineItems,
+  ShopifyOrdersPage,
+  ShopifyOrdersWithLineItemsPage,
+  ShopifyPaginatedOrderLineItem,
+  ShopifyProductByTitle,
+  ShopifyProductVariantNode,
+  ShopifyProductVariantsPage,
+  ShopifyProductWithVariants,
+  ShopifyProductsByTitlePage,
+  ShopifyResolvedCandidate,
+  ShopifyResolvedVariant,
+  ShopifyVariantLookupPage,
+  ShopifyVariantsPage,
+  ShopifyVariantSelection,
+} from "./shopify/types.js"
 
 declare const process: {
   env: Record<string, string | undefined>
@@ -233,177 +264,6 @@ const getDateRange = (windowDays: number, endDaysAgo: number) => {
   }
 }
 
-const SHOPIFY_SHOP_QUERY = `
-  query SellerHealthShop {
-    shop {
-      name
-      currencyCode
-      ianaTimezone
-    }
-  }
-`
-
-const SHOPIFY_ORDERS_PAGE_QUERY = `
-  query SellerHealthOrdersPage($ordersQuery: String!, $after: String) {
-    orders(first: 250, after: $after, query: $ordersQuery, sortKey: CREATED_AT, reverse: true) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        currentTotalPriceSet {
-          shopMoney {
-            amount
-            currencyCode
-          }
-        }
-        currentSubtotalLineItemsQuantity
-      }
-    }
-  }
-`
-
-const SHOPIFY_VARIANTS_PAGE_QUERY = `
-  query SellerHealthVariantsPage($after: String) {
-    productVariants(first: 250, after: $after) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        inventoryQuantity
-      }
-    }
-  }
-`
-
-const SHOPIFY_VARIANT_BY_SKU_QUERY = `
-  query SellerVariantBySku($skuQuery: String!, $after: String) {
-    productVariants(first: 250, query: $skuQuery, after: $after) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        id
-        sku
-        displayName
-        price
-        inventoryQuantity
-        inventoryItem {
-          unitCost {
-            amount
-            currencyCode
-          }
-        }
-        product {
-          id
-          title
-        }
-      }
-    }
-  }
-`
-
-const SHOPIFY_ORDERS_WITH_LINE_ITEMS_PAGE_QUERY = `
-  query SellerOrdersWithLineItemsPage($ordersQuery: String!, $after: String) {
-    orders(first: 250, after: $after, query: $ordersQuery, sortKey: CREATED_AT, reverse: true) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        id
-        lineItems(first: 250) {
-          pageInfo {
-            hasNextPage
-            endCursor
-          }
-          nodes {
-            sku
-            name
-            quantity
-          }
-        }
-      }
-    }
-  }
-`
-
-const SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY = `
-  query SellerOrderLineItemsPage($orderId: ID!, $after: String) {
-    order(id: $orderId) {
-      lineItems(first: 250, after: $after) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-        nodes {
-          sku
-          name
-          quantity
-        }
-      }
-    }
-  }
-`
-
-const SHOPIFY_PRODUCTS_BY_TITLE_QUERY = `
-  query SellerProductsByTitle($titleQuery: String!, $after: String) {
-    products(first: 50, after: $after, query: $titleQuery, sortKey: RELEVANCE) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        id
-        title
-      }
-    }
-  }
-`
-
-const SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY = `
-  query SellerProductVariantsPage($productId: ID!, $after: String) {
-    product(id: $productId) {
-      variants(first: 250, after: $after) {
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-        nodes {
-          id
-          sku
-          displayName
-          price
-          inventoryQuantity
-          inventoryItem {
-            unitCost {
-              amount
-              currencyCode
-            }
-          }
-          product {
-            id
-            title
-          }
-        }
-      }
-    }
-  }
-`
-
-const SHOPIFY_LOCALES_QUERY = `
-  query SellerHealthLocales {
-    shopLocales(first: 10) {
-      nodes {
-        locale
-        primary
-      }
-    }
-  }
-`
-
 const formatShopifyErrors = (errors: any) => {
   const baseMessage =
     typeof errors?.message === "string" && errors.message.trim()
@@ -423,171 +283,6 @@ const formatShopifyErrors = (errors: any) => {
     .filter(Boolean)
 
   return gqlMessages.length > 0 ? `${baseMessage} ${gqlMessages.join("; ")}` : baseMessage
-}
-
-type ShopifyOrdersPage = {
-  orders?: {
-    pageInfo?: {
-      hasNextPage?: boolean
-      endCursor?: string | null
-    }
-    nodes?: Array<{
-      currentTotalPriceSet?: {
-        shopMoney?: {
-          amount?: string
-          currencyCode?: string
-        }
-      }
-      currentSubtotalLineItemsQuantity?: number
-    }>
-  }
-}
-
-type ShopifyVariantsPage = {
-  productVariants?: {
-    pageInfo?: {
-      hasNextPage?: boolean
-      endCursor?: string | null
-    }
-    nodes?: Array<{
-      inventoryQuantity?: number | null
-    }>
-  }
-}
-
-type ShopifyVariantLookupPage = {
-  productVariants?: {
-    pageInfo?: {
-      hasNextPage?: boolean
-      endCursor?: string | null
-    }
-    nodes?: Array<{
-      id?: string
-      sku?: string | null
-      displayName?: string | null
-      price?: string | null
-      inventoryQuantity?: number | null
-      inventoryItem?: {
-        unitCost?: {
-          amount?: string | null
-          currencyCode?: string | null
-        } | null
-      } | null
-      product?: {
-        id?: string | null
-        title?: string | null
-      }
-    }>
-  }
-}
-
-type ShopifyOrdersWithLineItemsPage = {
-  orders?: {
-    pageInfo?: {
-      hasNextPage?: boolean
-      endCursor?: string | null
-    }
-    nodes?: Array<{
-      id?: string | null
-      lineItems?: {
-        pageInfo?: {
-          hasNextPage?: boolean
-          endCursor?: string | null
-        }
-        nodes?: Array<{
-          sku?: string | null
-          name?: string | null
-          quantity?: number | null
-        }>
-      }
-    }>
-  }
-}
-
-type ShopifyOrderLineItemsPage = {
-  order?: {
-    lineItems?: {
-      pageInfo?: {
-        hasNextPage?: boolean
-        endCursor?: string | null
-      }
-      nodes?: Array<{
-        sku?: string | null
-        name?: string | null
-        quantity?: number | null
-      }>
-    }
-  }
-}
-
-type ShopifyProductsByTitlePage = {
-  products?: {
-    pageInfo?: {
-      hasNextPage?: boolean
-      endCursor?: string | null
-    }
-    nodes?: Array<{
-      id?: string
-      title?: string | null
-    }>
-  }
-}
-
-type ShopifyProductVariantsPage = {
-  product?: {
-    variants?: {
-      pageInfo?: {
-        hasNextPage?: boolean
-        endCursor?: string | null
-      }
-      nodes?: Array<{
-        id?: string
-        sku?: string | null
-        displayName?: string | null
-        price?: string | null
-        inventoryQuantity?: number | null
-        inventoryItem?: {
-          unitCost?: {
-            amount?: string | null
-            currencyCode?: string | null
-          } | null
-        } | null
-        product?: {
-          id?: string | null
-          title?: string | null
-        }
-      }>
-    }
-  }
-}
-
-type ShopifyProductByTitle = NonNullable<NonNullable<ShopifyProductsByTitlePage["products"]>["nodes"]>[number]
-
-type ShopifyProductVariantNode = NonNullable<
-  NonNullable<NonNullable<ShopifyProductVariantsPage["product"]>["variants"]>["nodes"]
->[number]
-
-type ShopifyProductWithVariants = ShopifyProductByTitle & {
-  variants?: {
-    nodes?: ShopifyProductVariantNode[]
-  }
-}
-
-type ShopifyGraphQLClient = {
-  request: <TData>(
-    operation: string,
-    options?: {
-      variables?: Record<string, unknown>
-    },
-  ) => Promise<{
-    data?: TData
-    errors?: any
-  }>
-}
-
-type ShopifyGraphQLResponse<TData> = {
-  data?: TData
-  errors?: any
 }
 
 const fetchAllShopifyOrders = async (client: ShopifyGraphQLClient, ordersQuery: string) => {
@@ -739,35 +434,7 @@ const listCandidateSkus = (variants: Array<{ sku?: string | null }>) =>
     .map(variant => variant?.sku?.trim())
     .filter((value): value is string => Boolean(value))
 
-type ShopifyResolvedVariant =
-  | NonNullable<NonNullable<ShopifyVariantLookupPage["productVariants"]>["nodes"]>[number]
-  | ShopifyProductVariantNode
-
-type ShopifyResolvedCandidate = {
-  variant: ShopifyResolvedVariant
-  productKey: string
-}
-
 type ShopifyCandidateMatchKind = "sku_exact" | "title_exact" | "title_fuzzy"
-
-type ShopifyVariantSelection = {
-  variants: ShopifyResolvedVariant[]
-  resolvedSku: string
-  resolvedSkus: string[]
-  matchNames: string[]
-}
-
-type ShopifyOrderWithLineItems = NonNullable<
-  NonNullable<ShopifyOrdersWithLineItemsPage["orders"]>["nodes"]
->[number]
-
-type ShopifyInitialOrderLineItem = NonNullable<
-  NonNullable<ShopifyOrderWithLineItems["lineItems"]>["nodes"]
->[number]
-
-type ShopifyPaginatedOrderLineItem = NonNullable<
-  NonNullable<NonNullable<ShopifyOrderLineItemsPage["order"]>["lineItems"]>["nodes"]
->[number]
 
 const formatVariantChoice = (variant: ShopifyResolvedVariant) => {
   const sku = variant?.sku?.trim() || "no-sku"
