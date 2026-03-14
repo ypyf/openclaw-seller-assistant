@@ -5,7 +5,7 @@
 It packages six seller tools:
 
 - `seller_store_overview`: look up store-level revenue, order volume, units sold, and optional inventory totals for a time window
-- `seller_inventory_lookup`: look up current on-hand inventory for an exact SKU, full product title, or title keywords
+- `seller_inventory_query`: look up current on-hand inventory for an exact SKU, full product title, or title keywords
 - `seller_sales_query`: query recent sales for an exact SKU, full product title, or title keywords
 - `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
 - `seller_restock_signal`: estimate replenishment urgency for an exact SKU, full product title, or title keywords
@@ -51,7 +51,7 @@ For restricted configs, add the plugin id under `plugins.allow` and list the too
   "tools": {
     "allow": [
       "seller_store_overview",
-      "seller_inventory_lookup",
+      "seller_inventory_query",
       "seller_sales_query",
       "seller_quote_builder",
       "seller_restock_signal",
@@ -156,7 +156,7 @@ To use `seller_store_overview` with Shopify, grant the app at least these Admin 
 - `read_orders`
 - `read_products`
 
-`seller_inventory_lookup` only needs `read_products`.
+`seller_inventory_query` only needs `read_products`.
 
 `seller_store_overview`, `seller_sales_query`, `seller_restock_signal`, and `seller_campaign_context` use Shopify order data, so they need both `read_products` and `read_orders`.
 

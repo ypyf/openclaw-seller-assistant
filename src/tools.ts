@@ -34,14 +34,10 @@ const SellerStoreOverviewParamsSchema = Type.Object(
       Type.String({
         description:
           "Optional configured store id. If omitted, use defaultStoreId or the first configured store.",
-        }),
+      }),
     ),
     rangePreset: Type.Optional(
-      Type.Union([
-        Type.Literal("today"),
-        Type.Literal("yesterday"),
-        Type.Literal("last_7_days"),
-      ]),
+      Type.Union([Type.Literal("today"), Type.Literal("yesterday"), Type.Literal("last_7_days")]),
     ),
     startDate: Type.Optional(
       Type.String({
@@ -77,11 +73,7 @@ const SellerQuoteBuilderParamsSchema = Type.Object(
     paymentTerms: Type.Optional(Type.String()),
     notes: Type.Optional(Type.String()),
     tone: Type.Optional(
-      Type.Union([
-        Type.Literal("concise"),
-        Type.Literal("consultative"),
-        Type.Literal("premium"),
-      ]),
+      Type.Union([Type.Literal("concise"), Type.Literal("consultative"), Type.Literal("premium")]),
     ),
   },
   { additionalProperties: false },
@@ -311,7 +303,9 @@ const formatStoreOverview = (
     typeof input.averageDailyUnits === "number"
       ? `Average daily units: ${input.averageDailyUnits.toFixed(2)}`
       : null,
-    typeof input.inventoryUnits === "number" ? `Inventory units: ${Math.round(input.inventoryUnits)}` : null,
+    typeof input.inventoryUnits === "number"
+      ? `Inventory units: ${Math.round(input.inventoryUnits)}`
+      : null,
     typeof input.inventoryDaysLeft === "number"
       ? `Inventory cover: ${input.inventoryDaysLeft.toFixed(1)} days`
       : null,
@@ -474,7 +468,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
   })
 
   api.registerTool({
-    name: "seller_inventory_lookup",
+    name: "seller_inventory_query",
     label: "Seller Inventory Lookup",
     description:
       "Look up current on-hand inventory for an exact SKU or product title search. Use this when the user asks how much inventory a product has. Try the tool before asking for an exact SKU. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. This tool reads Shopify inventory only and does not require order access.",
@@ -483,13 +477,13 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
         throw new Error(
-          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_inventory_lookup.",
+          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_inventory_query.",
         )
       }
 
       if (configuredStore.platform !== "shopify") {
         throw new Error(
-          `seller_inventory_lookup is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+          `seller_inventory_query is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
         )
       }
 
@@ -545,12 +539,14 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
     parameters: SellerRestockSignalParamsSchema,
     async execute(_id: string, params: SellerRestockSignalParams) {
       const supplierLeadDays = resolvePositiveNumber(
-        optionalNumber(params.supplierLeadDays) ?? optionalNumber(pluginConfig.defaultSupplierLeadDays),
+        optionalNumber(params.supplierLeadDays) ??
+          optionalNumber(pluginConfig.defaultSupplierLeadDays),
         "supplierLeadDays",
         'Ask the user for supplier lead time in days, or configure "defaultSupplierLeadDays" in the plugin config.',
       )
       const safetyStockDays = resolveNonNegativeNumber(
-        optionalNumber(params.safetyStockDays) ?? optionalNumber(pluginConfig.defaultSafetyStockDays),
+        optionalNumber(params.safetyStockDays) ??
+          optionalNumber(pluginConfig.defaultSafetyStockDays),
         "safetyStockDays",
         'Ask the user for safety stock in days, or configure "defaultSafetyStockDays" in the plugin config.',
       )
@@ -624,14 +620,15 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       }
 
       const client = await createShopifyClient(configuredStore.store)
-      const snapshot = hasManualSales && !hasManualInventory
-        ? await loadShopifyInventorySnapshotFromClient(client, configuredStore.store, params.sku)
-        : await loadShopifyRestockSnapshotFromClient(
-            client,
-            configuredStore.store,
-            params.sku,
-            salesLookbackDays,
-          )
+      const snapshot =
+        hasManualSales && !hasManualInventory
+          ? await loadShopifyInventorySnapshotFromClient(client, configuredStore.store, params.sku)
+          : await loadShopifyRestockSnapshotFromClient(
+              client,
+              configuredStore.store,
+              params.sku,
+              salesLookbackDays,
+            )
       if (snapshot.kind !== "ready") {
         return textResult(snapshot.message)
       }
@@ -720,13 +717,21 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      if (hasManualMargin && !hasManualInventoryDays && !findConfiguredStore(pluginConfig, params.storeId)) {
+      if (
+        hasManualMargin &&
+        !hasManualInventoryDays &&
+        !findConfiguredStore(pluginConfig, params.storeId)
+      ) {
         return textResult(
           "To continue the campaign plan, ask the user for current inventory cover in days, or use a configured Shopify store so it can be loaded automatically.",
         )
       }
 
-      if (!hasManualMargin && hasManualInventoryDays && !findConfiguredStore(pluginConfig, params.storeId)) {
+      if (
+        !hasManualMargin &&
+        hasManualInventoryDays &&
+        !findConfiguredStore(pluginConfig, params.storeId)
+      ) {
         return textResult(
           "To continue the campaign plan, ask the user for the current gross margin percentage, or use a configured Shopify store with product cost data so it can be calculated automatically.",
         )
@@ -746,9 +751,18 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       }
 
       const client = await createShopifyClient(configuredStore.store)
-      const snapshot = hasManualInventoryDays && !hasManualMargin
-        ? await loadShopifyProductSnapshotFromClient(client, configuredStore.store, params.heroSku)
-        : await loadShopifyCampaignSnapshot(configuredStore.store, params.heroSku, salesLookbackDays)
+      const snapshot =
+        hasManualInventoryDays && !hasManualMargin
+          ? await loadShopifyProductSnapshotFromClient(
+              client,
+              configuredStore.store,
+              params.heroSku,
+            )
+          : await loadShopifyCampaignSnapshot(
+              configuredStore.store,
+              params.heroSku,
+              salesLookbackDays,
+            )
       if (snapshot.kind !== "ready") {
         return textResult(snapshot.message)
       }
@@ -766,10 +780,14 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
             "Ask the user for current inventory cover in days.",
           )
         : ready(
-            "inventoryDaysLeft" in snapshot.value ? toNumber(snapshot.value.inventoryDaysLeft, 999) : 999,
+            "inventoryDaysLeft" in snapshot.value
+              ? toNumber(snapshot.value.inventoryDaysLeft, 999)
+              : 999,
           )
       const lookbackDays =
-        "lookbackDays" in snapshot.value ? optionalNumber(snapshot.value.lookbackDays) ?? undefined : undefined
+        "lookbackDays" in snapshot.value
+          ? (optionalNumber(snapshot.value.lookbackDays) ?? undefined)
+          : undefined
 
       if (resolvedCurrentMarginPct.kind !== "ready") {
         return textResult(resolvedCurrentMarginPct.message)
