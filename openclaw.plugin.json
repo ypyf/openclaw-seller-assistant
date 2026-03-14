@@ -2,7 +2,7 @@
   "id": "seller-assistant",
   "name": "Seller Assistant",
   "description": "Seller assistant tools for pricing, RFQ replies, inventory checks, and campaign planning.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "skills": [
     "./skills"
   ],
