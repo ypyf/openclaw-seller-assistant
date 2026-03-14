@@ -6,7 +6,7 @@ It packages six seller tools:
 
 - `seller_store_overview`: look up store-level revenue, order volume, units sold, and optional inventory totals for a time window
 - `seller_inventory_lookup`: look up current on-hand inventory for an exact SKU, full product title, or title keywords
-- `seller_sales_lookup`: look up recent sales for an exact SKU, full product title, or title keywords
+- `seller_sales_query`: query recent sales for an exact SKU, full product title, or title keywords
 - `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
 - `seller_restock_signal`: estimate replenishment urgency for an exact SKU, full product title, or title keywords
 - `seller_campaign_context`: load campaign planning context for an exact SKU, full product title, or title keywords, using Shopify inventory and recent sales when available
@@ -52,7 +52,7 @@ For restricted configs, add the plugin id under `plugins.allow` and list the too
     "allow": [
       "seller_store_overview",
       "seller_inventory_lookup",
-      "seller_sales_lookup",
+      "seller_sales_query",
       "seller_quote_builder",
       "seller_restock_signal",
       "seller_campaign_context"
@@ -158,7 +158,7 @@ To use `seller_store_overview` with Shopify, grant the app at least these Admin 
 
 `seller_inventory_lookup` only needs `read_products`.
 
-`seller_store_overview`, `seller_sales_lookup`, `seller_restock_signal`, and `seller_campaign_context` use Shopify order data, so they need both `read_products` and `read_orders`.
+`seller_store_overview`, `seller_sales_query`, `seller_restock_signal`, and `seller_campaign_context` use Shopify order data, so they need both `read_products` and `read_orders`.
 
 Current limitations of the Shopify store overview:
 
@@ -196,8 +196,8 @@ After the plugin is loaded, ask the agent in natural language:
 - Ambiguous title-keyword searches return candidate choices instead of auto-selecting a product.
 - SKU matching is exact. SKU prefixes or partial SKU fragments are not supported.
 - `seller_store_overview` is the store-level factual tool for store revenue, order count, units sold, and optional inventory coverage.
-- Sales lookup is a product-level factual capability: use `seller_sales_lookup` when the user asks how much a product sold recently.
-- Store health is skill-led: the `store-health` skill should use `seller_store_overview` facts before giving any diagnosis.
+- Sales query is a product-level factual capability: use `seller_sales_query` when the user asks how much a product sold recently.
+- Store analysis is skill-led: the `store-analysis` skill should use `seller_store_overview` facts before giving any diagnosis or next-step advice.
 - Campaign planning is skill-led: `seller_campaign_context` loads planning context, and the campaign-planning skill should ask for any missing required inputs before giving the final recommendation.
 
 ## License

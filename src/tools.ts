@@ -502,22 +502,22 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
   })
 
   api.registerTool({
-    name: "seller_sales_lookup",
-    label: "Seller Sales Lookup",
+    name: "seller_sales_query",
+    label: "Seller Sales Query",
     description:
-      "Look up recent sales for an exact SKU or product title search. Use this when the user asks how much a product sold over a recent window. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
+      "Query recent product sales for an exact SKU or product title search. Use this when the user asks how much a product sold over a recent window. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. This is a product-level sales tool, not a store-total sales tool.",
     parameters: SellerSalesLookupParamsSchema,
     async execute(_id: string, params: SellerSalesLookupParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
         throw new Error(
-          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_sales_lookup.",
+          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_sales_query.",
         )
       }
 
       if (configuredStore.platform !== "shopify") {
         throw new Error(
-          `seller_sales_lookup is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+          `seller_sales_query is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
         )
       }
 
