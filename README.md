@@ -2,13 +2,14 @@
 
 `seller-assistant` is an OpenClaw plugin for merchant operations workflows across commerce platforms. It currently supports Shopify store connectivity, and is designed to expand to additional platforms such as Amazon over time.
 
-It packages five seller tools:
+It packages six seller tools:
 
-- `seller_health_check`: diagnose traffic, conversion, revenue, and inventory signals
-- `seller_inventory_lookup`: look up current on-hand inventory for an exact SKU or product title search
+- `seller_store_overview`: look up store-level revenue, order volume, units sold, and optional inventory totals for a time window
+- `seller_inventory_lookup`: look up current on-hand inventory for an exact SKU, full product title, or title keywords
+- `seller_sales_lookup`: look up recent sales for an exact SKU, full product title, or title keywords
 - `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
-- `seller_restock_signal`: estimate replenishment urgency
-- `seller_campaign_context`: load campaign planning context for an exact SKU or goal, using Shopify inventory and recent sales when available
+- `seller_restock_signal`: estimate replenishment urgency for an exact SKU, full product title, or title keywords
+- `seller_campaign_context`: load campaign planning context for an exact SKU, full product title, or title keywords, using Shopify inventory and recent sales when available
 
 ## Install
 
@@ -33,7 +34,9 @@ openclaw plugins doctor
 
 Plugin skills are loaded with the plugin, so restart the gateway after changes to the plugin or its `skills/` directory.
 
-If your config uses plugin or tool allowlists, add the plugin id under `plugins.allow` and list the tool names under `tools.allow`:
+By default, these registered tools do not need to be added to a manual allowlist. Only add explicit plugin or tool allowlist entries if your OpenClaw config already uses restrictive `plugins.allow` or `tools.allow` policies.
+
+For restricted configs, add the plugin id under `plugins.allow` and list the tool names under `tools.allow`:
 
 ```json
 {
@@ -47,8 +50,9 @@ If your config uses plugin or tool allowlists, add the plugin id under `plugins.
   },
   "tools": {
     "allow": [
-      "seller_health_check",
+      "seller_store_overview",
       "seller_inventory_lookup",
+      "seller_sales_lookup",
       "seller_quote_builder",
       "seller_restock_signal",
       "seller_campaign_context"
@@ -107,7 +111,9 @@ Example:
 In that structure:
 
 - `stores.shopify` is a list of Shopify stores
-- `defaultStoreId` should match one store `id`
+- `defaultStoreId` should match one store `id`, and is used when the user does not specify a store
+- `defaultSupplierLeadDays` and `defaultSafetyStockDays` are fallback values for restock checks
+- `defaultSalesLookbackDays` is the fallback sales window for Shopify-backed sales, restock, and campaign context lookups
 
 ## Shopify Auth Model
 
@@ -145,43 +151,54 @@ export SHOPIFY_CLIENT_SECRET="shpss_..."
 
 Admin API scopes are configured on the Shopify app itself, not in this plugin config.
 
-To use `seller_health_check` with Shopify, grant the app at least these Admin API scopes:
+To use `seller_store_overview` with Shopify, grant the app at least these Admin API scopes:
 
 - `read_orders`
 - `read_products`
 
 `seller_inventory_lookup` only needs `read_products`.
 
-`seller_restock_signal` and `seller_campaign_context` use Shopify inventory and recent sales for a SKU, so they need both `read_products` and `read_orders`.
+`seller_store_overview`, `seller_sales_lookup`, `seller_restock_signal`, and `seller_campaign_context` use Shopify order data, so they need both `read_products` and `read_orders`.
 
-Current limitations of the Shopify health check:
+Current limitations of the Shopify store overview:
 
 - traffic, conversion, and ad spend are not currently sourced from Shopify
-- larger stores may currently hit correctness gaps until pagination and comparison-window fixes are applied
+- inventory cover is only available when inventory totals are included and the selected window spans multiple days
 
 ## Usage
 
-After the plugin is loaded and allowed, ask the agent in natural language:
+After the plugin is loaded, ask the agent in natural language:
 
+- "How much did my store sell today?"
+- "How much did my store sell yesterday?"
+- "Show store overview for my default store over the last 7 days."
+- "Show store overview for store shopify-us from 2026-03-01 to 2026-03-07."
 - "Check store health for my default store."
-- "Check store health for store shopify-us."
-- "How much inventory does short sleeve have in my default store?"
+- "How much inventory does Short sleeve t-shirt have in my default store?"
+- "Check inventory for short sleeve in my default store."
 - "Check inventory for SKU WM-01 in store shopify-us."
+- "How much did SKU WM-01 sell in my default store over the last 7 days?"
+- "Check sales for short sleeve in my default store."
+- "Check sales for SKU WM-01 in store shopify-us. Use a 21 day sales lookback."
 - "Draft a quote for Acme for 500 wireless mice. Unit cost is 8, target price is 12, competitor price is 11.5, and lead time is 10 days."
 - "Check whether SKU WM-01 needs restocking for my default store."
 - "Check whether Wireless Mouse needs restocking for my default store."
 - "Check whether SKU WM-01 needs restocking for store shopify-us. Use a 21 day sales lookback."
-- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads for my default store."
-- "Create a campaign plan to clear inventory for Wireless Mouse on Meta ads for my default store."
-- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads for store shopify-us. Use a 21 day sales lookback."
-- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads. Current margin is 28%."
+- "Create a campaign plan to clear inventory for SKU WM-01 in my default store."
+- "Create a campaign plan to clear inventory for Wireless Mouse in my default store."
+- "Create a campaign plan to clear inventory for SKU WM-01 in store shopify-us. Use a 21 day sales lookback."
+- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads in my default store."
+- "Create a campaign plan to clear inventory for SKU WM-01 in my default store. Current gross margin is 28%."
 
 ## Notes
 
 - Product title resolution supports full titles and title keywords.
 - Ambiguous title-keyword searches return candidate choices instead of auto-selecting a product.
+- SKU matching is exact. SKU prefixes or partial SKU fragments are not supported.
+- `seller_store_overview` is the store-level factual tool for store revenue, order count, units sold, and optional inventory coverage.
+- Sales lookup is a product-level factual capability: use `seller_sales_lookup` when the user asks how much a product sold recently.
+- Store health is skill-led: the `store-health` skill should use `seller_store_overview` facts before giving any diagnosis.
 - Campaign planning is skill-led: `seller_campaign_context` loads planning context, and the campaign-planning skill should ask for any missing required inputs before giving the final recommendation.
-- A next phase can add optional side-effect tools for repricing, inventory sync, or auto-quote dispatch.
 
 ## License
 

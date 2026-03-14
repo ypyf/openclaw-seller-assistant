@@ -1,5 +1,4 @@
 import {
-  SHOPIFY_LOCALES_QUERY,
   SHOPIFY_ORDERS_PAGE_QUERY,
   SHOPIFY_ORDERS_WITH_LINE_ITEMS_PAGE_QUERY,
   SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY,
@@ -48,25 +47,18 @@ const SHOPIFY_TITLE_SEARCH_LIMIT = 50
 const SHOPIFY_MATCH_CHOICE_LIMIT = 5
 const SHOPIFY_VARIANT_FETCH_BATCH_SIZE = 5
 
-export type ShopifyHealthSnapshot = {
+export type ShopifyStoreOverviewSnapshot = {
   source: "shopify"
   storeName: string
-  periodLabel: string
-  currencyCode: string
   timezone: string | null
-  locale: string | null
-  revenue: number
-  previousRevenue: number
-  visits: number
-  previousVisits: number
-  conversionRatePct: number
-  previousConversionRatePct: number
-  adSpend: number
-  inventoryDaysLeft: number
-  inventoryUnits: number
+  currencyCode: string
+  windowLabel: string
+  ordersCount: number
   unitsSold: number
-  previousUnitsSold: number
-  previousDailyUnits: number
+  revenue: number
+  inventoryUnits?: number
+  averageDailyUnits?: number
+  inventoryDaysLeft?: number
 }
 
 export type ShopifyInventorySnapshot = {
@@ -77,9 +69,20 @@ export type ShopifyInventorySnapshot = {
   onHandUnits: number
 }
 
+export type ShopifySalesSnapshot = {
+  source: "shopify"
+  storeName: string
+  sku: string
+  productName: string
+  dailySalesUnits: number
+  lookbackDays: number
+  unitsSold: number
+}
+
 export type ShopifyRestockSnapshot = ShopifyInventorySnapshot & {
   dailySalesUnits: number
   lookbackDays: number
+  unitsSold: number
 }
 
 export type ShopifyProductSnapshot = ShopifyInventorySnapshot & {
@@ -114,6 +117,7 @@ export type RestockSignal = {
 }
 
 type ShopifyCandidateMatchKind = "sku_exact" | "title_exact" | "title_fuzzy"
+type StoreOverviewRangePreset = "today" | "yesterday" | "last_7_days"
 
 const listCandidateSkus = (variants: Array<{ sku?: string | null }>) =>
   variants.map(variant => variant?.sku?.trim()).filter((value): value is string => Boolean(value))
@@ -234,6 +238,170 @@ const runInBatches = async <TInput, TOutput>(
   }
 
   return results
+}
+
+const getTimeZoneParts = (date: Date, timeZone: string) => {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+  const parts = formatter.formatToParts(date)
+  const read = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find(part => part.type === type)?.value ?? "0")
+
+  return {
+    year: read("year"),
+    month: read("month"),
+    day: read("day"),
+    hour: read("hour"),
+    minute: read("minute"),
+    second: read("second"),
+  }
+}
+
+const getTimeZoneOffsetMs = (date: Date, timeZone: string) => {
+  const parts = getTimeZoneParts(date, timeZone)
+  const zonedAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  )
+  return zonedAsUtc - date.getTime()
+}
+
+const getUtcForTimeZoneMidnight = (
+  timeZone: string,
+  year: number,
+  month: number,
+  day: number,
+) => {
+  const approximateUtc = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+  const offsetMs = getTimeZoneOffsetMs(approximateUtc, timeZone)
+  return new Date(approximateUtc.getTime() - offsetMs)
+}
+
+const shiftLocalDate = (year: number, month: number, day: number, deltaDays: number) => {
+  const shifted = new Date(Date.UTC(year, month - 1, day + deltaDays, 0, 0, 0))
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+  }
+}
+
+const resolveStoreOverviewWindow = (
+  rangePreset: StoreOverviewRangePreset,
+  timeZone: string | null,
+) => {
+  const effectiveTimeZone = timeZone ?? "UTC"
+  const now = new Date()
+  const today = getTimeZoneParts(now, effectiveTimeZone)
+  const todayStart = getUtcForTimeZoneMidnight(
+    effectiveTimeZone,
+    today.year,
+    today.month,
+    today.day,
+  )
+  const tomorrow = shiftLocalDate(today.year, today.month, today.day, 1)
+  const tomorrowStart = getUtcForTimeZoneMidnight(
+    effectiveTimeZone,
+    tomorrow.year,
+    tomorrow.month,
+    tomorrow.day,
+  )
+
+  if (rangePreset === "today") {
+    return {
+      windowLabel: "today",
+      start: todayStart.toISOString(),
+      end: tomorrowStart.toISOString(),
+      dayCount: 1,
+    }
+  }
+
+  if (rangePreset === "yesterday") {
+    const yesterday = shiftLocalDate(today.year, today.month, today.day, -1)
+    return {
+      windowLabel: "yesterday",
+      start: getUtcForTimeZoneMidnight(
+        effectiveTimeZone,
+        yesterday.year,
+        yesterday.month,
+        yesterday.day,
+      ).toISOString(),
+      end: todayStart.toISOString(),
+      dayCount: 1,
+    }
+  }
+
+  const sevenDaysAgo = shiftLocalDate(today.year, today.month, today.day, -6)
+  return {
+    windowLabel: "last 7 days",
+    start: getUtcForTimeZoneMidnight(
+      effectiveTimeZone,
+      sevenDaysAgo.year,
+      sevenDaysAgo.month,
+      sevenDaysAgo.day,
+    ).toISOString(),
+    end: tomorrowStart.toISOString(),
+    dayCount: 7,
+  }
+}
+
+const parseIsoDate = (input: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.trim())
+  if (!match) {
+    return null
+  }
+  const [, year, month, day] = match
+  return {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+  }
+}
+
+const resolveCustomStoreOverviewWindow = (
+  startDate: string,
+  endDate: string,
+  timeZone: string | null,
+) => {
+  const start = parseIsoDate(startDate)
+  const end = parseIsoDate(endDate)
+  if (!start || !end) {
+    throw new Error('Custom store overview dates must use "YYYY-MM-DD".')
+  }
+
+  const effectiveTimeZone = timeZone ?? "UTC"
+  const startUtc = getUtcForTimeZoneMidnight(effectiveTimeZone, start.year, start.month, start.day)
+  const exclusiveEndDate = shiftLocalDate(end.year, end.month, end.day, 1)
+  const endUtc = getUtcForTimeZoneMidnight(
+    effectiveTimeZone,
+    exclusiveEndDate.year,
+    exclusiveEndDate.month,
+    exclusiveEndDate.day,
+  )
+
+  if (endUtc.getTime() <= startUtc.getTime()) {
+    throw new Error("Custom store overview endDate must be on or after startDate.")
+  }
+
+  const dayCount = Math.round((endUtc.getTime() - startUtc.getTime()) / 86400000)
+  return {
+    windowLabel: `${startDate.trim()} to ${endDate.trim()}`,
+    start: startUtc.toISOString(),
+    end: endUtc.toISOString(),
+    dayCount,
+  }
 }
 
 const fetchAllShopifyOrders = async (client: ShopifyGraphQLClient, ordersQuery: string) => {
@@ -666,24 +834,22 @@ const summarizeShopifyVariantPricing = (variants: ShopifyResolvedVariant[]) => {
   }
 }
 
-/** Loads a 7-day Shopify store health snapshot with revenue, units sold, and inventory cover. */
-export const loadShopifyHealthSnapshot = async (
+/** Loads a Shopify store overview with sales and optional inventory totals for a time window. */
+export const loadShopifyStoreOverview = async (
   store: ShopifyStoreConfig,
-): Promise<ShopifyHealthSnapshot> => {
+  options: {
+    rangePreset?: StoreOverviewRangePreset
+    startDate?: string
+    endDate?: string
+    includeInventory?: boolean
+  },
+): Promise<ShopifyStoreOverviewSnapshot> => {
   const client = await createShopifyClient(store)
-  const currentRange = getDateRange(7, 0)
-  const previousRange = getDateRange(7, 7)
-
-  const buildOrderQuery = (range: { start: string; end: string }) =>
-    `created_at:>=${range.start} created_at:<${range.end} financial_status:paid`
-
-  const [shopResult, currentOrders, previousOrders, inventoryUnits] = await Promise.all([
+  const [shopResult, inventoryUnits] = await Promise.all([
     client.request<{
       shop?: { name?: string; currencyCode?: string; ianaTimezone?: string | null }
     }>(SHOPIFY_SHOP_QUERY),
-    fetchAllShopifyOrders(client, buildOrderQuery(currentRange)),
-    fetchAllShopifyOrders(client, buildOrderQuery(previousRange)),
-    fetchAllShopifyInventoryUnits(client),
+    options.includeInventory === false ? Promise.resolve<number | undefined>(undefined) : fetchAllShopifyInventoryUnits(client),
   ])
 
   if (shopResult.errors) {
@@ -691,17 +857,15 @@ export const loadShopifyHealthSnapshot = async (
   }
 
   const shop = shopResult.data?.shop
+  const timeZone = shop?.ianaTimezone ?? null
+  const window =
+    options.startDate && options.endDate
+      ? resolveCustomStoreOverviewWindow(options.startDate, options.endDate, timeZone)
+      : resolveStoreOverviewWindow(options.rangePreset ?? "today", timeZone)
+  const ordersQuery = `created_at:>=${window.start} created_at:<${window.end} financial_status:paid`
+  const orders = await fetchAllShopifyOrders(client, ordersQuery)
   const revenue = sum(
-    currentOrders.map(order =>
-      toNumber(
-        order?.currentTotalPriceSet?.shopMoney?.amount
-          ? Number(order.currentTotalPriceSet.shopMoney.amount)
-          : 0,
-      ),
-    ),
-  )
-  const previousRevenue = sum(
-    previousOrders.map(order =>
+    orders.map(order =>
       toNumber(
         order?.currentTotalPriceSet?.shopMoney?.amount
           ? Number(order.currentTotalPriceSet.shopMoney.amount)
@@ -710,69 +874,46 @@ export const loadShopifyHealthSnapshot = async (
     ),
   )
   const unitsSold = sum(
-    currentOrders.map(order => toNumber(order?.currentSubtotalLineItemsQuantity)),
+    orders.map(order => toNumber(order?.currentSubtotalLineItemsQuantity)),
   )
-  const previousUnitsSold = sum(
-    previousOrders.map(order => toNumber(order?.currentSubtotalLineItemsQuantity)),
-  )
-  const averageDailyUnits = unitsSold / 7
-  const inventoryDaysLeft = averageDailyUnits > 0 ? inventoryUnits / averageDailyUnits : 999
-  const previousDailyUnits = previousUnitsSold / 7
-
-  let primaryLocale: string | null = null
-  const localesResult = await client.request<{ shopLocales?: { nodes?: Array<unknown> } }>(
-    SHOPIFY_LOCALES_QUERY,
-  )
-  if (!localesResult.errors) {
-    const locales = toArray<{ locale?: string; primary?: boolean }>(
-      localesResult.data?.shopLocales?.nodes,
-    )
-    primaryLocale = locales.find(locale => locale?.primary)?.locale ?? locales[0]?.locale ?? null
-  }
+  const averageDailyUnits = window.dayCount > 1 ? unitsSold / window.dayCount : undefined
+  const inventoryDaysLeft =
+    typeof inventoryUnits === "number" && averageDailyUnits && averageDailyUnits > 0
+      ? inventoryUnits / averageDailyUnits
+      : undefined
 
   return {
     source: "shopify",
     storeName: shop?.name ?? store.name,
-    periodLabel: "last 7 days",
+    timezone: timeZone,
     currencyCode:
       shop?.currencyCode ??
-      currentOrders[0]?.currentTotalPriceSet?.shopMoney?.currencyCode ??
+      orders[0]?.currentTotalPriceSet?.shopMoney?.currencyCode ??
       "USD",
-    timezone: shop?.ianaTimezone ?? null,
-    locale: primaryLocale,
-    revenue,
-    previousRevenue,
-    visits: 0,
-    previousVisits: 0,
-    conversionRatePct: 0,
-    previousConversionRatePct: 0,
-    adSpend: 0,
-    inventoryDaysLeft,
-    inventoryUnits,
+    windowLabel: window.windowLabel,
+    ordersCount: orders.length,
     unitsSold,
-    previousUnitsSold,
-    previousDailyUnits,
+    revenue,
+    inventoryUnits,
+    averageDailyUnits,
+    inventoryDaysLeft,
   }
 }
 
 /** Resolves a product and recent sales using an existing Shopify client. */
-export const loadShopifyRestockSnapshotFromClient = async (
+export const loadShopifySalesSnapshotFromClient = async (
   client: ShopifyGraphQLClient,
   store: ShopifyStoreConfig,
-  sku: string,
+  productRef: string,
   lookbackDays: number,
-): Promise<FlowResolution<ShopifyRestockSnapshot>> => {
-  const selection = await resolveShopifyVariantSelection(client, sku)
+): Promise<FlowResolution<ShopifySalesSnapshot>> => {
+  const selection = await resolveShopifyVariantSelection(client, productRef)
   if (selection.kind !== "ready") {
     return selection
   }
-  const [variants, dailySalesUnits] = await Promise.all([
-    Promise.resolve(selection.value.variants),
-    fetchShopifyDailySalesBySku(client, selection.value, lookbackDays),
-  ])
-
-  const onHandUnits = sum(variants.map(variant => toNumber(variant?.inventoryQuantity)))
-  const firstVariant = variants[0]
+  const dailySalesUnits = await fetchShopifyDailySalesBySku(client, selection.value, lookbackDays)
+  const firstVariant = selection.value.variants[0]
+  const unitsSold = dailySalesUnits * lookbackDays
 
   return ready({
     source: "shopify",
@@ -783,9 +924,49 @@ export const loadShopifyRestockSnapshotFromClient = async (
       firstVariant?.displayName ??
       firstVariant?.sku ??
       selection.value.resolvedSku,
-    onHandUnits,
     dailySalesUnits,
     lookbackDays,
+    unitsSold,
+  })
+}
+
+/** Resolves a product and recent sales by creating a Shopify client on demand. */
+export const loadShopifySalesSnapshot = async (
+  store: ShopifyStoreConfig,
+  productRef: string,
+  lookbackDays: number,
+): Promise<FlowResolution<ShopifySalesSnapshot>> => {
+  const client = await createShopifyClient(store)
+  return loadShopifySalesSnapshotFromClient(client, store, productRef, lookbackDays)
+}
+
+/** Resolves a product and recent sales using an existing Shopify client. */
+export const loadShopifyRestockSnapshotFromClient = async (
+  client: ShopifyGraphQLClient,
+  store: ShopifyStoreConfig,
+  sku: string,
+  lookbackDays: number,
+): Promise<FlowResolution<ShopifyRestockSnapshot>> => {
+  const [inventorySnapshot, salesSnapshot] = await Promise.all([
+    loadShopifyInventorySnapshotFromClient(client, store, sku),
+    loadShopifySalesSnapshotFromClient(client, store, sku, lookbackDays),
+  ])
+  if (inventorySnapshot.kind !== "ready") {
+    return inventorySnapshot
+  }
+  if (salesSnapshot.kind !== "ready") {
+    return salesSnapshot
+  }
+
+  return ready({
+    source: "shopify",
+    storeName: store.name,
+    sku: salesSnapshot.value.sku,
+    productName: salesSnapshot.value.productName,
+    onHandUnits: inventorySnapshot.value.onHandUnits,
+    dailySalesUnits: salesSnapshot.value.dailySalesUnits,
+    lookbackDays: salesSnapshot.value.lookbackDays,
+    unitsSold: salesSnapshot.value.unitsSold,
   })
 }
 

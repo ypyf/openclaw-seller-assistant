@@ -1,10 +1,12 @@
 ---
 name: "store-health"
-description: "Check store health with the seller_health_check tool. Use when the user asks to check store health, store performance, weekly sales health, inventory health, or similar seller-side diagnostics."
+description: "Review store performance with the seller_store_overview tool. Use when the user asks about store health, store performance, recent store sales, inventory cover, or similar store-level diagnostics."
 ---
 
 # Store Health
 
-Prefer `seller_health_check` first. Do not ask the user for store metrics before trying the tool. If the tool cannot run because the plugin, store config, or platform is unavailable, explain that plainly and do not fabricate results.
+Prefer `seller_store_overview` first. Use it for both store-level fact queries and store-health analysis.
 
-Summarize the result in short seller-facing bullet points.
+If the user asks for a direct fact such as today's sales, yesterday's sales, or recent store totals, answer from the tool output plainly and keep the exact time window.
+
+If the user asks for health, performance, or operational risk, start with the tool facts, then add a short seller-facing analysis. Do not invent traffic, conversion, or ad-spend data if the tool does not provide them.

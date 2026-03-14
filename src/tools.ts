@@ -5,14 +5,16 @@ import { createShopifyClient } from "./shopify/client.js"
 import {
   evaluateRestockSignal,
   loadShopifyCampaignSnapshot,
-  loadShopifyHealthSnapshot,
   loadShopifyInventorySnapshot,
   loadShopifyInventorySnapshotFromClient,
   loadShopifyProductSnapshotFromClient,
   loadShopifyRestockSnapshotFromClient,
+  loadShopifyStoreOverview,
   type RestockSignal,
-  type ShopifyHealthSnapshot,
   type ShopifyInventorySnapshot,
+  type ShopifySalesSnapshot,
+  type ShopifyStoreOverviewSnapshot,
+  loadShopifySalesSnapshot,
 } from "./services/shopify.js"
 import {
   currency,
@@ -26,12 +28,37 @@ import {
   toNumber,
 } from "./utils.js"
 
-const SellerHealthCheckParamsSchema = Type.Object(
+const SellerStoreOverviewParamsSchema = Type.Object(
   {
     storeId: Type.Optional(
       Type.String({
         description:
-          "Optional configured store id. If omitted, the tool should use defaultStoreId or the first configured store.",
+          "Optional configured store id. If omitted, use defaultStoreId or the first configured store.",
+        }),
+    ),
+    rangePreset: Type.Optional(
+      Type.Union([
+        Type.Literal("today"),
+        Type.Literal("yesterday"),
+        Type.Literal("last_7_days"),
+      ]),
+    ),
+    startDate: Type.Optional(
+      Type.String({
+        description:
+          'Optional custom start date in "YYYY-MM-DD". Use together with endDate instead of rangePreset.',
+      }),
+    ),
+    endDate: Type.Optional(
+      Type.String({
+        description:
+          'Optional custom end date in "YYYY-MM-DD". Use together with startDate instead of rangePreset.',
+      }),
+    ),
+    includeInventory: Type.Optional(
+      Type.Boolean({
+        description:
+          "Whether to include total inventory units and inventory cover in the store overview. Defaults to true.",
       }),
     ),
   },
@@ -72,6 +99,28 @@ const SellerInventoryLookupParamsSchema = Type.Object(
       description:
         "Exact SKU, full product title, or product title keywords to search in Shopify before returning on-hand inventory.",
     }),
+  },
+  { additionalProperties: false },
+)
+
+const SellerSalesLookupParamsSchema = Type.Object(
+  {
+    storeId: Type.Optional(
+      Type.String({
+        description:
+          "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
+      }),
+    ),
+    productRef: Type.String({
+      description:
+        "Exact SKU, full product title, or product title keywords to search in Shopify before loading recent sales.",
+    }),
+    salesLookbackDays: Type.Optional(
+      Type.Number({
+        description:
+          "Optional sales lookback window for Shopify data loading. If omitted, use the configured default lookback window.",
+      }),
+    ),
   },
   { additionalProperties: false },
 )
@@ -141,9 +190,10 @@ const SellerCampaignPlanParamsSchema = Type.Object(
   { additionalProperties: false },
 )
 
-type SellerHealthCheckParams = Static<typeof SellerHealthCheckParamsSchema>
+type SellerStoreOverviewParams = Static<typeof SellerStoreOverviewParamsSchema>
 type SellerQuoteBuilderParams = Static<typeof SellerQuoteBuilderParamsSchema>
 type SellerInventoryLookupParams = Static<typeof SellerInventoryLookupParamsSchema>
+type SellerSalesLookupParams = Static<typeof SellerSalesLookupParamsSchema>
 type SellerRestockSignalParams = Static<typeof SellerRestockSignalParamsSchema>
 type SellerCampaignPlanParams = Static<typeof SellerCampaignPlanParamsSchema>
 
@@ -176,6 +226,19 @@ const formatInventoryLookup = (input: ShopifyInventorySnapshot) =>
     input.productName ? `Product: ${input.productName}` : null,
     `SKU: ${input.sku}`,
     `On-hand units: ${Math.round(input.onHandUnits)}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+
+const formatSalesLookup = (input: ShopifySalesSnapshot) =>
+  [
+    input.source ? `Source: ${input.source}` : null,
+    input.storeName ? `Store: ${input.storeName}` : null,
+    input.productName ? `Product: ${input.productName}` : null,
+    `SKU: ${input.sku}`,
+    `Sales lookback: last ${input.lookbackDays} days`,
+    `Average daily sales: ${input.dailySalesUnits.toFixed(2)}`,
+    `Estimated units sold: ${Math.round(input.unitsSold)}`,
   ]
     .filter(Boolean)
     .join("\n")
@@ -233,75 +296,25 @@ const formatCampaignContext = (input: {
     .join("\n")
 }
 
-const formatHealthCheck = (
-  input: ShopifyHealthSnapshot,
-  options: { lowInventoryDays: number; currency: string; locale: string },
+const formatStoreOverview = (
+  input: ShopifyStoreOverviewSnapshot,
+  options: { currency: string; locale: string },
 ) => {
-  const revenueDeltaPct =
-    input.previousRevenue > 0
-      ? ((input.revenue - input.previousRevenue) / input.previousRevenue) * 100
-      : 0
-  const trafficDeltaPct =
-    input.previousVisits > 0
-      ? ((input.visits - input.previousVisits) / input.previousVisits) * 100
-      : 0
-  const conversionDeltaPct = input.conversionRatePct - input.previousConversionRatePct
-  const roas = input.adSpend > 0 ? input.revenue / input.adSpend : null
-
-  const alerts: string[] = []
-  if (input.inventoryDaysLeft <= options.lowInventoryDays) {
-    alerts.push(`Inventory risk: only ${input.inventoryDaysLeft.toFixed(1)} days left.`)
-  }
-  if (input.previousVisits > 0 && trafficDeltaPct < -10) {
-    alerts.push(`Traffic dropped ${percentage(Math.abs(trafficDeltaPct))} versus the prior period.`)
-  }
-  if (input.previousConversionRatePct > 0 && conversionDeltaPct < -0.5) {
-    alerts.push(`Conversion declined by ${conversionDeltaPct.toFixed(1)} percentage points.`)
-  }
-  if (roas !== null && roas < 2) {
-    alerts.push(`Paid efficiency is weak with ROAS at ${roas.toFixed(2)}.`)
-  }
-  if (alerts.length === 0) {
-    alerts.push("No immediate structural risk detected.")
-  }
-
-  const actions = [
-    input.previousVisits > 0 && trafficDeltaPct < -10
-      ? "Review channel mix and campaign pacing before changing price."
-      : "Preserve traffic sources that are still compounding demand.",
-    input.previousConversionRatePct > 0 && conversionDeltaPct < -0.5
-      ? "Audit PDP quality, offer clarity, and checkout friction."
-      : "Keep the current conversion playbook and test one upsell lever.",
-    input.inventoryDaysLeft <= options.lowInventoryDays
-      ? "Prioritize replenishment or slow paid demand on thin-stock SKUs."
-      : "Maintain current inventory posture and watch days of cover weekly.",
-  ]
-
   return [
     input.source ? `Source: ${input.source}` : null,
     `Store: ${input.storeName}`,
-    `Window: ${input.periodLabel ?? "last 7 days"}`,
-    `Revenue: ${currency(input.revenue, input.currencyCode ?? options.currency, options.locale)} (${input.previousRevenue > 0 && revenueDeltaPct >= 0 ? "+" : ""}${percentage(revenueDeltaPct)} vs prior)`,
+    `Window: ${input.windowLabel}`,
+    `Revenue: ${currency(input.revenue, input.currencyCode ?? options.currency, options.locale)}`,
     input.timezone ? `Timezone: ${input.timezone}` : "Timezone: n/a",
-    input.locale ? `Locale: ${input.locale}` : "Locale: n/a",
-    input.previousVisits > 0
-      ? `Visits: ${input.visits} (${trafficDeltaPct >= 0 ? "+" : ""}${percentage(trafficDeltaPct)} vs prior)`
-      : "Visits: n/a (Shopify Admin API does not provide storefront traffic)",
-    input.previousConversionRatePct > 0
-      ? `Conversion: ${percentage(input.conversionRatePct)} (${conversionDeltaPct >= 0 ? "+" : ""}${conversionDeltaPct.toFixed(1)} pts vs prior)`
-      : "Conversion: n/a (requires traffic analytics outside Shopify Admin API)",
-    roas === null || input.adSpend <= 0 ? "ROAS: n/a" : `ROAS: ${roas.toFixed(2)}`,
-    `Inventory cover: ${input.inventoryDaysLeft.toFixed(1)} days`,
-    typeof input.inventoryUnits === "number" ? `Inventory units: ${Math.round(input.inventoryUnits)}` : null,
-    typeof input.unitsSold === "number"
-      ? `Units sold: ${Math.round(input.unitsSold)} vs ${Math.round(input.previousUnitsSold ?? 0)} prior`
+    `Orders: ${input.ordersCount}`,
+    `Units sold: ${Math.round(input.unitsSold)}`,
+    typeof input.averageDailyUnits === "number"
+      ? `Average daily units: ${input.averageDailyUnits.toFixed(2)}`
       : null,
-    "",
-    "Alerts:",
-    ...alerts.map(item => `- ${item}`),
-    "",
-    "Recommended next actions:",
-    ...actions.map(item => `- ${item}`),
+    typeof input.inventoryUnits === "number" ? `Inventory units: ${Math.round(input.inventoryUnits)}` : null,
+    typeof input.inventoryDaysLeft === "number"
+      ? `Inventory cover: ${input.inventoryDaysLeft.toFixed(1)} days`
+      : null,
   ]
     .filter(Boolean)
     .join("\n")
@@ -361,24 +374,49 @@ const formatQuoteDraft = (input: {
 /** Registers all seller-facing OpenClaw tools for this plugin instance. */
 export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: PluginConfig) => {
   api.registerTool({
-    name: "seller_health_check",
-    label: "Seller Health Check",
+    name: "seller_store_overview",
+    label: "Seller Store Overview",
     description:
-      "Check store health for a configured store. If storeId is omitted, use the configured default store. If no configured store is available, prompt the user to configure a store first.",
-    parameters: SellerHealthCheckParamsSchema,
-    async execute(_id: string, params: SellerHealthCheckParams) {
+      "Load store-level sales and inventory facts for a configured store. Use this for questions like today's sales, yesterday's sales, or recent store totals. If storeId is omitted, use the configured default store.",
+    parameters: SellerStoreOverviewParamsSchema,
+    async execute(_id: string, params: SellerStoreOverviewParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
         throw new Error(
-          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_health_check.",
+          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_store_overview.",
+        )
+      }
+
+      const hasCustomRange = Boolean(params.startDate || params.endDate)
+      if (hasCustomRange && (!params.startDate || !params.endDate)) {
+        return textResult(
+          'Ask the user for both "startDate" and "endDate" in YYYY-MM-DD format, or use a range preset such as today, yesterday, or last_7_days.',
+        )
+      }
+
+      if (hasCustomRange && params.rangePreset) {
+        return textResult(
+          'Use either "rangePreset" or "startDate"/"endDate" for seller_store_overview, not both.',
         )
       }
 
       if (configuredStore.platform === "shopify") {
-        const snapshot = await loadShopifyHealthSnapshot(configuredStore.store)
+        let snapshot: ShopifyStoreOverviewSnapshot
+        try {
+          snapshot = await loadShopifyStoreOverview(configuredStore.store, {
+            rangePreset: params.rangePreset,
+            startDate: params.startDate,
+            endDate: params.endDate,
+            includeInventory: params.includeInventory,
+          })
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith("Custom store overview")) {
+            return textResult(error.message)
+          }
+          throw error
+        }
         return textResult(
-          formatHealthCheck(snapshot, {
-            lowInventoryDays: pluginConfig.lowInventoryDays,
+          formatStoreOverview(snapshot, {
             currency: pluginConfig.currency,
             locale: pluginConfig.locale,
           }),
@@ -386,7 +424,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       }
 
       throw new Error(
-        `seller_health_check is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+        `seller_store_overview is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
       )
     },
   })
@@ -460,6 +498,42 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         return textResult(snapshot.message)
       }
       return textResult(formatInventoryLookup(snapshot.value))
+    },
+  })
+
+  api.registerTool({
+    name: "seller_sales_lookup",
+    label: "Seller Sales Lookup",
+    description:
+      "Look up recent sales for an exact SKU or product title search. Use this when the user asks how much a product sold over a recent window. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
+    parameters: SellerSalesLookupParamsSchema,
+    async execute(_id: string, params: SellerSalesLookupParams) {
+      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
+      if (!configuredStore) {
+        throw new Error(
+          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_sales_lookup.",
+        )
+      }
+
+      if (configuredStore.platform !== "shopify") {
+        throw new Error(
+          `seller_sales_lookup is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+        )
+      }
+
+      const salesLookbackDays = Math.max(
+        1,
+        Math.round(toNumber(params.salesLookbackDays, pluginConfig.salesLookbackDays)),
+      )
+      const snapshot = await loadShopifySalesSnapshot(
+        configuredStore.store,
+        params.productRef,
+        salesLookbackDays,
+      )
+      if (snapshot.kind !== "ready") {
+        return textResult(snapshot.message)
+      }
+      return textResult(formatSalesLookup(snapshot.value))
     },
   })
 
