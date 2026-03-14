@@ -16,6 +16,10 @@
   ],
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ypyf/openclaw-seller-assistant.git"
+  },
   "files": [
     "index.ts",
     "src/",
