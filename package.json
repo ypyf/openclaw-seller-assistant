@@ -38,6 +38,7 @@
     ]
   },
   "devDependencies": {
-    "openclaw": "^2026.3.12"
+    "openclaw": "^2026.3.12",
+    "typescript": "^5.9.3"
   }
 }

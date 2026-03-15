@@ -1,15 +1,38 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core"
+import { DEFAULT_PLUGIN_CONFIG } from "./config.js"
 
 /** Formats a numeric percentage with one decimal place. */
 export const percentage = (value: number) => `${value.toFixed(1)}%`
 
 /** Formats a currency amount with the given code and locale. */
-export const currency = (value: number, code = "USD", locale = "en-US") =>
+export const currency = (
+  value: number,
+  code = DEFAULT_PLUGIN_CONFIG.currency,
+  locale = DEFAULT_PLUGIN_CONFIG.locale,
+) =>
   new Intl.NumberFormat(locale, {
     style: "currency",
     currency: code,
     maximumFractionDigits: 2,
   }).format(value)
+
+/** Formats an ISO timestamp into a user-facing local datetime string. */
+export const formatDateTime = (
+  value: string,
+  locale = DEFAULT_PLUGIN_CONFIG.locale,
+  timeZone = DEFAULT_PLUGIN_CONFIG.timeZone,
+) =>
+  new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone,
+    timeZoneName: "short",
+  }).format(new Date(value))
 
 /** Returns a finite number or falls back to the provided default. */
 export const toNumber = (value: unknown, fallback = 0) =>
@@ -20,7 +43,11 @@ export const optionalNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : null
 
 /** Normalizes SKUs and titles for exact or fuzzy matching. */
-export const normalizeSku = (value: string) => value.trim().toLowerCase().replace(/[-_\s]+/g, "")
+export const normalizeSku = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[-_\s]+/g, "")
 /** Removes duplicate values while preserving insertion order. */
 export const unique = <T>(values: T[]) => [...new Set(values)]
 /** Splits a search phrase into normalized letter/number tokens. */

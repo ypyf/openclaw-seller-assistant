@@ -87,9 +87,10 @@ Example:
         "enabled": true,
         "config": {
           "defaultStoreId": "shopify-us",
-          "defaultSupplierLeadDays": 7,
-          "defaultSafetyStockDays": 5,
-          "defaultSalesLookbackDays": 30,
+          "currency": "USD",
+          "supplierLeadDays": 7,
+          "safetyStockDays": 5,
+          "salesLookbackDays": 30,
           "stores": {
             "shopify": [
               {
@@ -97,7 +98,10 @@ Example:
                 "name": "US Shopify Store",
                 "storeDomain": "your-store.myshopify.com",
                 "clientId": "your_shopify_client_id",
-                "clientSecretEnv": "SHOPIFY_CLIENT_SECRET"
+                "clientSecretEnv": "SHOPIFY_CLIENT_SECRET",
+                "supplierLeadDays": 10,
+                "safetyStockDays": 7,
+                "salesLookbackDays": 21
               }
             ]
           }
@@ -111,9 +115,20 @@ Example:
 In that structure:
 
 - `stores.shopify` is a list of Shopify stores
-- `defaultStoreId` should match one store `id`, and is used when the user does not specify a store
-- `defaultSupplierLeadDays` and `defaultSafetyStockDays` are fallback values for restock checks
-- `defaultSalesLookbackDays` is the fallback sales window for Shopify-backed sales, restock, and campaign context lookups
+- `defaultStoreId` is optional when only one store is configured. If set, it should match one store `id` and is used when the user does not specify a store.
+- `currency` is a fallback display currency for outputs that do not have an explicit business currency from source data. It does not override Shopify's actual store or order currency.
+- `locale` controls date, number, and currency formatting for tool output
+- store-level `supplierLeadDays`, `safetyStockDays`, and `salesLookbackDays` override the plugin-level defaults for that store
+- plugin-level `supplierLeadDays` and `safetyStockDays` remain shared fallbacks for restock checks
+- plugin-level `salesLookbackDays` remains the shared fallback sales window for Shopify-backed sales, restock, and campaign context lookups
+
+Built-in defaults when a config value is omitted:
+
+- `currency`: `USD`
+- `locale`: `en-US`
+- `lowInventoryDays`: `14`
+- `salesLookbackDays`: `30`
+- `responseTone`: `consultative`
 
 ## Shopify Auth Model
 

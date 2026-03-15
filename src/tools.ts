@@ -1,6 +1,11 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
 import { Type, type Static } from "@sinclair/typebox"
-import { findConfiguredStore, type PluginConfig } from "./config.js"
+import {
+  DEFAULT_PLUGIN_CONFIG,
+  findConfiguredStore,
+  getStoreSettingNumber,
+  type PluginConfig,
+} from "./config.js"
 import { createShopifyClient } from "./shopify/client.js"
 import {
   evaluateRestockSignal,
@@ -18,6 +23,7 @@ import {
 } from "./services/shopify.js"
 import {
   currency,
+  formatDateTime,
   formatObjectiveLabel,
   optionalNumber,
   percentage,
@@ -188,12 +194,55 @@ type SellerInventoryLookupParams = Static<typeof SellerInventoryLookupParamsSche
 type SellerSalesLookupParams = Static<typeof SellerSalesLookupParamsSchema>
 type SellerRestockSignalParams = Static<typeof SellerRestockSignalParamsSchema>
 type SellerCampaignPlanParams = Static<typeof SellerCampaignPlanParamsSchema>
+type CampaignContextViewModel = {
+  objective: string
+  heroSku: string
+  channel: string
+  currentMarginPct: number
+  inventoryDaysLeft: number
+  currency: string
+  locale: string
+  productName: string
+  source: string
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  lookbackDays?: number
+  constraint?: string
+  currencyCode?: string | null
+  averageUnitPrice?: number
+  averageUnitCost?: number | null
+  targetMarginFloorPct?: number
+}
+
+const resolveOptionalConfiguredNumber = (
+  configuredStore: ReturnType<typeof findConfiguredStore>,
+  key: Parameters<typeof getStoreSettingNumber>[1],
+  pluginFallback?: number,
+) => getStoreSettingNumber(configuredStore, key) ?? pluginFallback
+
+const resolveSalesLookbackDays = (
+  value: unknown,
+  configuredStore: ReturnType<typeof findConfiguredStore>,
+  pluginConfig: PluginConfig,
+) =>
+  Math.max(
+    1,
+    Math.round(
+      toNumber(
+        value,
+        getStoreSettingNumber(configuredStore, "salesLookbackDays") ??
+          pluginConfig.salesLookbackDays,
+      ),
+    ),
+  )
 
 const formatRestockSignal = (input: RestockSignal) =>
   [
-    input.source ? `Source: ${input.source}` : null,
-    input.storeName ? `Store: ${input.storeName}` : null,
-    input.productName ? `Product: ${input.productName}` : null,
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, input.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
+    `Product: ${input.productName}`,
     `SKU: ${input.sku}`,
     `On-hand units: ${Math.round(input.onHandUnits)}`,
     `Average daily sales: ${input.dailySalesUnits.toFixed(2)}`,
@@ -203,7 +252,9 @@ const formatRestockSignal = (input: RestockSignal) =>
     `Supplier lead time: ${input.supplierLeadDays} days`,
     `Safety stock: ${input.safetyStockDays} days`,
     `Reorder point: ${Math.ceil(input.reorderPointUnits)} units`,
-    input.lookbackDays ? `Sales lookback: last ${input.lookbackDays} days` : null,
+    typeof input.lookbackDays === "number"
+      ? `Sales lookback: last ${input.lookbackDays} days`
+      : null,
     `Urgency: ${input.urgency}`,
     "",
     input.action,
@@ -213,9 +264,10 @@ const formatRestockSignal = (input: RestockSignal) =>
 
 const formatInventoryLookup = (input: ShopifyInventorySnapshot) =>
   [
-    input.source ? `Source: ${input.source}` : null,
-    input.storeName ? `Store: ${input.storeName}` : null,
-    input.productName ? `Product: ${input.productName}` : null,
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, input.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
+    `Product: ${input.productName}`,
     `SKU: ${input.sku}`,
     `On-hand units: ${Math.round(input.onHandUnits)}`,
   ]
@@ -224,9 +276,10 @@ const formatInventoryLookup = (input: ShopifyInventorySnapshot) =>
 
 const formatSalesLookup = (input: ShopifySalesSnapshot) =>
   [
-    input.source ? `Source: ${input.source}` : null,
-    input.storeName ? `Store: ${input.storeName}` : null,
-    input.productName ? `Product: ${input.productName}` : null,
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, input.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
+    `Product: ${input.productName}`,
     `SKU: ${input.sku}`,
     `Sales lookback: last ${input.lookbackDays} days`,
     `Average daily sales: ${input.dailySalesUnits.toFixed(2)}`,
@@ -235,35 +288,19 @@ const formatSalesLookup = (input: ShopifySalesSnapshot) =>
     .filter(Boolean)
     .join("\n")
 
-const formatCampaignContext = (input: {
-  objective: string
-  heroSku: string
-  productName?: string
-  channel: string
-  currentMarginPct: number
-  inventoryDaysLeft: number
-  constraint?: string
-  source?: string
-  storeName?: string
-  lookbackDays?: number
-  currencyCode?: string | null
-  averageUnitPrice?: number
-  averageUnitCost?: number | null
-  targetMarginFloorPct?: number
-  currency: string
-  locale: string
-}) => {
+const formatCampaignContext = (input: CampaignContextViewModel) => {
   const marginBuffer =
     typeof input.targetMarginFloorPct === "number"
       ? input.currentMarginPct - input.targetMarginFloorPct
       : null
 
   return [
-    input.source ? `Source: ${input.source}` : null,
-    input.storeName ? `Store: ${input.storeName}` : null,
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, input.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
     `Objective: ${formatObjectiveLabel(input.objective)}`,
     `Hero SKU: ${input.heroSku}`,
-    input.productName ? `Product: ${input.productName}` : null,
+    `Product: ${input.productName}`,
     `Primary channel: ${input.channel}`,
     typeof input.averageUnitPrice === "number" && input.averageUnitPrice > 0
       ? `Average unit price: ${currency(input.averageUnitPrice, input.currencyCode ?? input.currency, input.locale)}`
@@ -271,7 +308,9 @@ const formatCampaignContext = (input: {
     typeof input.averageUnitCost === "number" && input.averageUnitCost > 0
       ? `Average unit cost: ${currency(input.averageUnitCost, input.currencyCode ?? input.currency, input.locale)}`
       : null,
-    input.lookbackDays ? `Sales lookback: last ${input.lookbackDays} days` : null,
+    typeof input.lookbackDays === "number"
+      ? `Sales lookback: last ${input.lookbackDays} days`
+      : null,
     `Current margin: ${percentage(input.currentMarginPct)}`,
     `Inventory cover: ${input.inventoryDaysLeft.toFixed(1)} days`,
     marginBuffer !== null
@@ -288,15 +327,13 @@ const formatCampaignContext = (input: {
     .join("\n")
 }
 
-const formatStoreOverview = (
-  input: ShopifyStoreOverviewSnapshot,
-  options: { currency: string; locale: string },
-) => {
+const formatStoreOverview = (input: ShopifyStoreOverviewSnapshot, options: { locale: string }) => {
   return [
-    input.source ? `Source: ${input.source}` : null,
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, options.locale, input.timezone)}`,
     `Store: ${input.storeName}`,
     `Window: ${input.windowLabel}`,
-    `Revenue: ${currency(input.revenue, input.currencyCode ?? options.currency, options.locale)}`,
+    `Revenue: ${currency(input.revenue, input.currencyCode, options.locale)}`,
     input.timezone ? `Timezone: ${input.timezone}` : "Timezone: n/a",
     `Orders: ${input.ordersCount}`,
     `Units sold: ${Math.round(input.unitsSold)}`,
@@ -411,7 +448,6 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         }
         return textResult(
           formatStoreOverview(snapshot, {
-            currency: pluginConfig.currency,
             locale: pluginConfig.locale,
           }),
         )
@@ -487,7 +523,11 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      const snapshot = await loadShopifyInventorySnapshot(configuredStore.store, params.productRef)
+      const snapshot = await loadShopifyInventorySnapshot(
+        configuredStore.store,
+        params.productRef,
+        pluginConfig.locale,
+      )
       if (snapshot.kind !== "ready") {
         return textResult(snapshot.message)
       }
@@ -515,14 +555,16 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      const salesLookbackDays = Math.max(
-        1,
-        Math.round(toNumber(params.salesLookbackDays, pluginConfig.salesLookbackDays)),
+      const salesLookbackDays = resolveSalesLookbackDays(
+        params.salesLookbackDays,
+        configuredStore,
+        pluginConfig,
       )
       const snapshot = await loadShopifySalesSnapshot(
         configuredStore.store,
         params.productRef,
         salesLookbackDays,
+        pluginConfig.locale,
       )
       if (snapshot.kind !== "ready") {
         return textResult(snapshot.message)
@@ -538,25 +580,38 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       "Estimate restock urgency for an exact SKU or product title search. Try the tool before asking for an exact SKU. If inventory or sales inputs are omitted, load them from a configured Shopify store. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. Only ask for supplierLeadDays or safetyStockDays if they are still missing after checking plugin config.",
     parameters: SellerRestockSignalParamsSchema,
     async execute(_id: string, params: SellerRestockSignalParams) {
+      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       const supplierLeadDays = resolvePositiveNumber(
         optionalNumber(params.supplierLeadDays) ??
-          optionalNumber(pluginConfig.defaultSupplierLeadDays),
+          optionalNumber(
+            resolveOptionalConfiguredNumber(
+              configuredStore,
+              "supplierLeadDays",
+              pluginConfig.supplierLeadDays,
+            ),
+          ),
         "supplierLeadDays",
-        'Ask the user for supplier lead time in days, or configure "defaultSupplierLeadDays" in the plugin config.',
+        'Ask the user for supplier lead time in days, or configure "supplierLeadDays" on the store or plugin config.',
       )
       const safetyStockDays = resolveNonNegativeNumber(
         optionalNumber(params.safetyStockDays) ??
-          optionalNumber(pluginConfig.defaultSafetyStockDays),
+          optionalNumber(
+            resolveOptionalConfiguredNumber(
+              configuredStore,
+              "safetyStockDays",
+              pluginConfig.safetyStockDays,
+            ),
+          ),
         "safetyStockDays",
-        'Ask the user for safety stock in days, or configure "defaultSafetyStockDays" in the plugin config.',
+        'Ask the user for safety stock in days, or configure "safetyStockDays" on the store or plugin config.',
       )
-      const salesLookbackDays = Math.max(
-        1,
-        Math.round(toNumber(params.salesLookbackDays, pluginConfig.salesLookbackDays)),
+      const salesLookbackDays = resolveSalesLookbackDays(
+        params.salesLookbackDays,
+        configuredStore,
+        pluginConfig,
       )
       const hasManualInventory = typeof params.onHandUnits === "number"
       const hasManualSales = typeof params.dailySalesUnits === "number"
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
 
       if (supplierLeadDays.kind !== "ready") {
         return textResult(supplierLeadDays.message)
@@ -590,6 +645,12 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
               dailySalesUnits: dailySalesUnits.value,
               supplierLeadDays: supplierLeadDays.value,
               safetyStockDays: safetyStockDays.value,
+              source: "manual",
+              retrievedAtIso: new Date().toISOString(),
+              locale: pluginConfig.locale,
+              storeName: "Manual input",
+              timezone: "UTC",
+              productName: params.sku,
             }),
           ),
         )
@@ -622,12 +683,18 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       const client = await createShopifyClient(configuredStore.store)
       const snapshot =
         hasManualSales && !hasManualInventory
-          ? await loadShopifyInventorySnapshotFromClient(client, configuredStore.store, params.sku)
+          ? await loadShopifyInventorySnapshotFromClient(
+              client,
+              configuredStore.store,
+              params.sku,
+              pluginConfig.locale,
+            )
           : await loadShopifyRestockSnapshotFromClient(
               client,
               configuredStore.store,
               params.sku,
               salesLookbackDays,
+              pluginConfig.locale,
             )
       if (snapshot.kind !== "ready") {
         return textResult(snapshot.message)
@@ -665,6 +732,10 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
               typeof dailySalesUnits === "number" ? dailySalesUnits : dailySalesUnits.value,
             supplierLeadDays: supplierLeadDays.value,
             safetyStockDays: safetyStockDays.value,
+            lookbackDays:
+              "lookbackDays" in snapshot.value
+                ? (optionalNumber(snapshot.value.lookbackDays) ?? undefined)
+                : undefined,
           }),
         ),
       )
@@ -678,9 +749,11 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       "Load campaign planning context for an exact SKU or product title search. Use this before drafting a final campaign recommendation. Prefer loading inventory cover and recent sales from a configured Shopify store. Ask the user for any required missing campaign inputs before giving the final plan. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
     parameters: SellerCampaignPlanParamsSchema,
     async execute(_id: string, params: SellerCampaignPlanParams) {
-      const salesLookbackDays = Math.max(
-        1,
-        Math.round(toNumber(params.salesLookbackDays, pluginConfig.salesLookbackDays)),
+      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
+      const salesLookbackDays = resolveSalesLookbackDays(
+        params.salesLookbackDays,
+        configuredStore,
+        pluginConfig,
       )
       const hasManualMargin = typeof params.currentMarginPct === "number"
       const hasManualInventoryDays = typeof params.inventoryDaysLeft === "number"
@@ -708,7 +781,12 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
             heroSku: params.heroSku,
             currentMarginPct: currentMarginPct.value,
             inventoryDaysLeft: inventoryDaysLeft.value,
+            productName: params.heroSku,
             channel: params.channel,
+            source: "manual",
+            retrievedAtIso: new Date().toISOString(),
+            storeName: "Manual input",
+            timezone: "UTC",
             constraint: params.constraint,
             targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
             currency: pluginConfig.currency,
@@ -717,27 +795,18 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      if (
-        hasManualMargin &&
-        !hasManualInventoryDays &&
-        !findConfiguredStore(pluginConfig, params.storeId)
-      ) {
+      if (hasManualMargin && !hasManualInventoryDays && !configuredStore) {
         return textResult(
           "To continue the campaign plan, ask the user for current inventory cover in days, or use a configured Shopify store so it can be loaded automatically.",
         )
       }
 
-      if (
-        !hasManualMargin &&
-        hasManualInventoryDays &&
-        !findConfiguredStore(pluginConfig, params.storeId)
-      ) {
+      if (!hasManualMargin && hasManualInventoryDays && !configuredStore) {
         return textResult(
           "To continue the campaign plan, ask the user for the current gross margin percentage, or use a configured Shopify store with product cost data so it can be calculated automatically.",
         )
       }
 
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
         return textResult(
           "Ask the user either to provide margin and inventory inputs manually, or to configure a store in plugins.entries.seller-assistant.config.",
@@ -757,11 +826,13 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
               client,
               configuredStore.store,
               params.heroSku,
+              pluginConfig.locale,
             )
           : await loadShopifyCampaignSnapshot(
               configuredStore.store,
               params.heroSku,
               salesLookbackDays,
+              pluginConfig.locale,
             )
       if (snapshot.kind !== "ready") {
         return textResult(snapshot.message)
@@ -811,7 +882,9 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
           channel: params.channel,
           constraint: params.constraint,
           source: snapshot.value.source,
+          retrievedAtIso: snapshot.value.retrievedAtIso,
           storeName: snapshot.value.storeName,
+          timezone: snapshot.value.timezone,
           lookbackDays,
           currencyCode: "currencyCode" in snapshot.value ? snapshot.value.currencyCode : null,
           averageUnitPrice:

@@ -10,13 +10,15 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "defaultCurrency": {
+      "currency": {
         "type": "string",
-        "description": "Default currency code used for formatted tool output."
+        "description": "Display currency fallback used when a tool output does not have an explicit business currency from source data, such as quote drafts or manual-input planning contexts.",
+        "default": "USD"
       },
-      "defaultLocale": {
+      "locale": {
         "type": "string",
-        "description": "Default locale used for formatted tool output."
+        "description": "Display locale used for formatted tool output.",
+        "default": "en-US"
       },
       "targetMarginFloorPct": {
         "type": "number",
@@ -24,23 +26,26 @@
       },
       "lowInventoryDays": {
         "type": "number",
-        "description": "Inventory days-of-cover threshold that triggers low-stock warnings."
+        "description": "Inventory days-of-cover threshold that triggers low-stock warnings.",
+        "default": 14
       },
-      "defaultSupplierLeadDays": {
+      "supplierLeadDays": {
         "type": "number",
-        "description": "Default supplier lead time in days used by restock checks when the user does not provide one."
+        "description": "Shared supplier lead time in days used by restock checks when the user does not provide one."
       },
-      "defaultSafetyStockDays": {
+      "safetyStockDays": {
         "type": "number",
-        "description": "Default safety stock buffer in days used by restock checks when the user does not provide one."
+        "description": "Shared safety stock buffer in days used by restock checks when the user does not provide one."
       },
-      "defaultSalesLookbackDays": {
+      "salesLookbackDays": {
         "type": "number",
-        "description": "Default lookback window in days used to estimate average daily sales for Shopify-backed restock checks."
+        "description": "Shared lookback window in days used to estimate average daily sales for Shopify-backed restock checks.",
+        "default": 30
       },
-      "defaultResponseTone": {
+      "responseTone": {
         "type": "string",
-        "description": "Default response tone for seller-facing draft outputs.",
+        "description": "Shared response tone for seller-facing draft outputs.",
+        "default": "consultative",
         "enum": [
           "concise",
           "consultative",
@@ -49,7 +54,7 @@
       },
       "defaultStoreId": {
         "type": "string",
-        "description": "Default store profile to use when the user does not specify a store."
+        "description": "Store profile to use when the user does not specify a store."
       },
       "stores": {
         "type": "object",
@@ -81,6 +86,18 @@
                 "clientSecretEnv": {
                   "type": "string",
                   "description": "Environment variable name on the OpenClaw host that contains the merchant-owned Shopify app client secret."
+                },
+                "supplierLeadDays": {
+                  "type": "number",
+                  "description": "Optional store-level supplier lead time override in days. If omitted, fall back to the plugin-level supplierLeadDays."
+                },
+                "safetyStockDays": {
+                  "type": "number",
+                  "description": "Optional store-level safety stock override in days. If omitted, fall back to the plugin-level safetyStockDays."
+                },
+                "salesLookbackDays": {
+                  "type": "number",
+                  "description": "Optional store-level sales lookback override in days. If omitted, fall back to the plugin-level salesLookbackDays."
                 }
               },
               "required": [
