@@ -2,6 +2,9 @@
 
 `seller-assistant` is an OpenClaw plugin for merchant operations workflows across commerce platforms. It currently supports Shopify store connectivity, and is designed to expand to additional platforms such as Amazon over time.
 
+> [!WARNING]
+> This project is evolving quickly. Many features are still incomplete, and tool behavior, configuration, and public interfaces may change without preserving backward compatibility between releases.
+
 It packages six seller tools:
 
 - `seller_store_overview`: look up store-level revenue, order volume, units sold, and optional inventory totals for a time window
