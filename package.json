@@ -42,7 +42,7 @@
     "format:check": "prettier \"**/*.{js,jsx,ts,tsx,json,html,css,md}\" --check"
   },
   "devDependencies": {
-    "openclaw": "^2026.3.12",
+    "openclaw": "^2026.3.13",
     "prettier": "^3.8.1",
     "typescript": "^5.9.3"
   }
