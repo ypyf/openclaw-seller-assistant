@@ -5,6 +5,7 @@ export type ShopifyOrdersPage = {
       endCursor?: string | null
     }
     nodes?: Array<{
+      createdAt?: string | null
       currentTotalPriceSet?: {
         shopMoney?: {
           amount?: string

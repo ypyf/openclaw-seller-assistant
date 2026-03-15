@@ -14,11 +14,14 @@ import {
   loadShopifyInventorySnapshotFromClient,
   loadShopifyProductSnapshotFromClient,
   loadShopifyRestockSnapshotFromClient,
+  loadShopifyStoreSalesSummary,
   loadShopifyStoreOverview,
   type RestockSignal,
   type ShopifyInventorySnapshot,
   type ShopifySalesSnapshot,
+  type ShopifyStoreSalesSummarySnapshot,
   type ShopifyStoreOverviewSnapshot,
+  type StoreOverviewRangePreset,
   loadShopifySalesSnapshot,
 } from "./services/shopify.js"
 import {
@@ -34,6 +37,39 @@ import {
   toNumber,
 } from "./utils.js"
 
+const StoreOverviewRangePresetSchema = Type.Union([
+  Type.Literal("today"),
+  Type.Literal("yesterday"),
+  Type.Literal("last_7_days"),
+  Type.Literal("last_30_days"),
+  Type.Literal("last_60_days"),
+  Type.Literal("last_90_days"),
+  Type.Literal("last_180_days"),
+  Type.Literal("last_365_days"),
+])
+
+const STORE_SALES_SUMMARY_WINDOW_ORDER: StoreOverviewRangePreset[] = [
+  "today",
+  "yesterday",
+  "last_7_days",
+  "last_30_days",
+  "last_60_days",
+  "last_90_days",
+  "last_180_days",
+  "last_365_days",
+]
+
+const STORE_SALES_SUMMARY_WINDOW_LABELS: Record<StoreOverviewRangePreset, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  last_7_days: "Last 7 days",
+  last_30_days: "Last 30 days",
+  last_60_days: "Last 60 days",
+  last_90_days: "Last 90 days",
+  last_180_days: "Last 180 days",
+  last_365_days: "Last 1 year",
+}
+
 const SellerStoreOverviewParamsSchema = Type.Object(
   {
     storeId: Type.Optional(
@@ -42,9 +78,7 @@ const SellerStoreOverviewParamsSchema = Type.Object(
           "Optional configured store id. If omitted, use defaultStoreId or the first configured store.",
       }),
     ),
-    rangePreset: Type.Optional(
-      Type.Union([Type.Literal("today"), Type.Literal("yesterday"), Type.Literal("last_7_days")]),
-    ),
+    rangePreset: Type.Optional(StoreOverviewRangePresetSchema),
     startDate: Type.Optional(
       Type.String({
         description:
@@ -61,6 +95,31 @@ const SellerStoreOverviewParamsSchema = Type.Object(
       Type.Boolean({
         description:
           "Whether to include total inventory units and inventory cover in the store overview. Defaults to true.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+)
+
+const SellerStoreSalesSummaryParamsSchema = Type.Object(
+  {
+    storeId: Type.Optional(
+      Type.String({
+        description:
+          "Optional configured store id. If omitted, use defaultStoreId or the first configured store.",
+      }),
+    ),
+    windows: Type.Optional(
+      Type.Array(StoreOverviewRangePresetSchema, {
+        description:
+          "Optional standard summary windows to include. If omitted, include today, yesterday, and the standard rolling windows through last_365_days.",
+        minItems: 1,
+      }),
+    ),
+    includeInventory: Type.Optional(
+      Type.Boolean({
+        description:
+          "Whether to include inventory units and inventory cover from the longest successfully loaded window. Defaults to true.",
       }),
     ),
   },
@@ -189,6 +248,7 @@ const SellerCampaignPlanParamsSchema = Type.Object(
 )
 
 type SellerStoreOverviewParams = Static<typeof SellerStoreOverviewParamsSchema>
+type SellerStoreSalesSummaryParams = Static<typeof SellerStoreSalesSummaryParamsSchema>
 type SellerQuoteBuilderParams = Static<typeof SellerQuoteBuilderParamsSchema>
 type SellerInventoryLookupParams = Static<typeof SellerInventoryLookupParamsSchema>
 type SellerSalesLookupParams = Static<typeof SellerSalesLookupParamsSchema>
@@ -236,6 +296,11 @@ const resolveSalesLookbackDays = (
       ),
     ),
   )
+
+const resolveStoreSalesSummaryWindows = (windows?: StoreOverviewRangePreset[]) => {
+  const requestedWindows = new Set(windows ?? STORE_SALES_SUMMARY_WINDOW_ORDER)
+  return STORE_SALES_SUMMARY_WINDOW_ORDER.filter(window => requestedWindows.has(window))
+}
 
 const formatRestockSignal = (input: RestockSignal) =>
   [
@@ -351,6 +416,42 @@ const formatStoreOverview = (input: ShopifyStoreOverviewSnapshot, options: { loc
     .join("\n")
 }
 
+const formatStoreSalesSummary = (input: {
+  storeName: string
+  timezone?: string
+  locale: string
+  currencyCode: string
+  lines: ShopifyStoreSalesSummarySnapshot["windows"]
+  inventoryUnits?: number
+  inventoryDaysLeft?: number
+  inventoryErrorMessage?: string
+}) => {
+  const summaryLines = input.lines.map(line => {
+    const label = STORE_SALES_SUMMARY_WINDOW_LABELS[line.rangePreset]
+    return `${label}: ${currency(line.revenue, input.currencyCode, input.locale)} (${line.ordersCount} orders, ${Math.round(line.unitsSold)} units)`
+  })
+  const inventoryLines = [
+    typeof input.inventoryUnits === "number"
+      ? `Inventory: ${Math.round(input.inventoryUnits)} units`
+      : input.inventoryErrorMessage
+        ? `Inventory: unavailable (${input.inventoryErrorMessage})`
+        : null,
+    typeof input.inventoryDaysLeft === "number"
+      ? `Inventory cover: ${input.inventoryDaysLeft.toFixed(1)} days`
+      : null,
+  ].filter(Boolean)
+
+  return [
+    `Store ${input.storeName} (store timezone: ${input.timezone ?? "n/a"}) sales summary:`,
+    "",
+    ...summaryLines,
+    inventoryLines.length > 0 ? "" : null,
+    ...inventoryLines,
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
 const formatQuoteDraft = (input: {
   buyerName: string
   productName: string
@@ -408,7 +509,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
     name: "seller_store_overview",
     label: "Seller Store Overview",
     description:
-      "Load store-level sales and inventory facts for a configured store. Use this for questions like today's sales, yesterday's sales, or recent store totals. If storeId is omitted, use the configured default store.",
+      "Load store-level sales and inventory facts for a configured store. Use this for questions like today's sales, yesterday's sales, or recent store totals over standard windows such as the last 7, 30, 60, 90, 180, or 365 days. If storeId is omitted, use the configured default store.",
     parameters: SellerStoreOverviewParamsSchema,
     async execute(_id: string, params: SellerStoreOverviewParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
@@ -421,7 +522,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       const hasCustomRange = Boolean(params.startDate || params.endDate)
       if (hasCustomRange && (!params.startDate || !params.endDate)) {
         return textResult(
-          'Ask the user for both "startDate" and "endDate" in YYYY-MM-DD format, or use a range preset such as today, yesterday, or last_7_days.',
+          'Ask the user for both "startDate" and "endDate" in YYYY-MM-DD format, or use a range preset such as today, yesterday, last_7_days, last_30_days, last_60_days, last_90_days, last_180_days, or last_365_days.',
         )
       }
 
@@ -455,6 +556,47 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
 
       throw new Error(
         `seller_store_overview is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+      )
+    },
+  })
+
+  api.registerTool({
+    name: "seller_store_sales_summary",
+    label: "Seller Store Sales Summary",
+    description:
+      "Load a multi-window store sales summary as final plain text. Use this for store sales overviews and standard summaries across windows such as today, yesterday, last 7 days, last 30 days, last 60 days, last 90 days, last 180 days, and last 365 days.",
+    parameters: SellerStoreSalesSummaryParamsSchema,
+    async execute(_id: string, params: SellerStoreSalesSummaryParams) {
+      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
+      if (!configuredStore) {
+        throw new Error(
+          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_store_sales_summary.",
+        )
+      }
+
+      if (configuredStore.platform === "shopify") {
+        const requestedWindows = resolveStoreSalesSummaryWindows(params.windows)
+        const summary = await loadShopifyStoreSalesSummary(configuredStore.store, {
+          windows: requestedWindows,
+          includeInventory: params.includeInventory,
+        })
+
+        return textResult(
+          formatStoreSalesSummary({
+            storeName: summary.storeName,
+            timezone: summary.timezone,
+            locale: pluginConfig.locale,
+            currencyCode: summary.currencyCode,
+            lines: summary.windows,
+            inventoryUnits: summary.inventoryUnits,
+            inventoryDaysLeft: summary.inventoryDaysLeft,
+            inventoryErrorMessage: summary.inventoryErrorMessage,
+          }),
+        )
+      }
+
+      throw new Error(
+        `seller_store_sales_summary is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
       )
     },
   })

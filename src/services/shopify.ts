@@ -62,6 +62,26 @@ export type ShopifyStoreOverviewSnapshot = {
   inventoryDaysLeft?: number
 }
 
+export type ShopifyStoreSalesSummaryWindow = {
+  rangePreset: StoreOverviewRangePreset
+  windowLabel: string
+  ordersCount: number
+  unitsSold: number
+  revenue: number
+}
+
+export type ShopifyStoreSalesSummarySnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  currencyCode: string
+  windows: ShopifyStoreSalesSummaryWindow[]
+  inventoryUnits?: number
+  inventoryDaysLeft?: number
+  inventoryErrorMessage?: string
+}
+
 export type ShopifyInventorySnapshot = {
   source: "shopify"
   retrievedAtIso: string
@@ -127,7 +147,52 @@ export type RestockSignal = {
 }
 
 type ShopifyCandidateMatchKind = "sku_exact" | "title_exact" | "title_fuzzy"
-type StoreOverviewRangePreset = "today" | "yesterday" | "last_7_days"
+export type StoreOverviewRangePreset =
+  | "today"
+  | "yesterday"
+  | "last_7_days"
+  | "last_30_days"
+  | "last_60_days"
+  | "last_90_days"
+  | "last_180_days"
+  | "last_365_days"
+
+type StoreOverviewWindow = {
+  windowLabel: string
+  start: string
+  end: string
+  dayCount: number
+}
+
+const STORE_OVERVIEW_ROLLING_WINDOW_CONFIG: Record<
+  Exclude<StoreOverviewRangePreset, "today" | "yesterday">,
+  { windowLabel: string; dayCount: number }
+> = {
+  last_7_days: {
+    windowLabel: "last 7 days",
+    dayCount: 7,
+  },
+  last_30_days: {
+    windowLabel: "last 30 days",
+    dayCount: 30,
+  },
+  last_60_days: {
+    windowLabel: "last 60 days",
+    dayCount: 60,
+  },
+  last_90_days: {
+    windowLabel: "last 90 days",
+    dayCount: 90,
+  },
+  last_180_days: {
+    windowLabel: "last 180 days",
+    dayCount: 180,
+  },
+  last_365_days: {
+    windowLabel: "last 365 days",
+    dayCount: 365,
+  },
+}
 
 const listCandidateSkus = (variants: Array<{ sku?: string | null }>) =>
   variants.map(variant => variant?.sku?.trim()).filter((value): value is string => Boolean(value))
@@ -318,8 +383,11 @@ const shiftLocalDate = (year: number, month: number, day: number, deltaDays: num
   }
 }
 
-const resolveStoreOverviewWindow = (rangePreset: StoreOverviewRangePreset, timeZone: string) => {
-  const now = new Date()
+export const resolveStoreOverviewWindow = (
+  rangePreset: StoreOverviewRangePreset,
+  timeZone: string,
+  now = new Date(),
+): StoreOverviewWindow => {
   const today = getTimeZoneParts(now, timeZone)
   const todayStart = getUtcForTimeZoneMidnight(timeZone, today.year, today.month, today.day)
   const tomorrow = shiftLocalDate(today.year, today.month, today.day, 1)
@@ -354,17 +422,19 @@ const resolveStoreOverviewWindow = (rangePreset: StoreOverviewRangePreset, timeZ
     }
   }
 
-  const sevenDaysAgo = shiftLocalDate(today.year, today.month, today.day, -6)
+  const rollingWindow = STORE_OVERVIEW_ROLLING_WINDOW_CONFIG[rangePreset]
+  const startDate = shiftLocalDate(today.year, today.month, today.day, 1 - rollingWindow.dayCount)
+
   return {
-    windowLabel: "last 7 days",
+    windowLabel: rollingWindow.windowLabel,
     start: getUtcForTimeZoneMidnight(
       timeZone,
-      sevenDaysAgo.year,
-      sevenDaysAgo.month,
-      sevenDaysAgo.day,
+      startDate.year,
+      startDate.month,
+      startDate.day,
     ).toISOString(),
     end: tomorrowStart.toISOString(),
-    dayCount: 7,
+    dayCount: rollingWindow.dayCount,
   }
 }
 
@@ -439,6 +509,36 @@ const fetchAllShopifyOrders = async (client: ShopifyGraphQLClient, ordersQuery: 
   }
 
   return orders
+}
+
+const summarizeShopifyOrders = (
+  orders: NonNullable<NonNullable<ShopifyOrdersPage["orders"]>["nodes"]>,
+  window: { start: string; end: string },
+) => {
+  const startMs = Date.parse(window.start)
+  const endMs = Date.parse(window.end)
+  const ordersInWindow = orders.filter(order => {
+    const createdAt = order?.createdAt
+    if (!createdAt) {
+      return false
+    }
+    const createdAtMs = Date.parse(createdAt)
+    return Number.isFinite(createdAtMs) && createdAtMs >= startMs && createdAtMs < endMs
+  })
+
+  return {
+    ordersCount: ordersInWindow.length,
+    unitsSold: sum(ordersInWindow.map(order => toNumber(order?.currentSubtotalLineItemsQuantity))),
+    revenue: sum(
+      ordersInWindow.map(order =>
+        toNumber(
+          order?.currentTotalPriceSet?.shopMoney?.amount
+            ? Number(order.currentTotalPriceSet.shopMoney.amount)
+            : 0,
+        ),
+      ),
+    ),
+  }
 }
 
 const fetchAllShopifyInventoryUnits = async (client: ShopifyGraphQLClient) => {
@@ -905,6 +1005,87 @@ export const loadShopifyStoreOverview = async (
     inventoryUnits,
     averageDailyUnits,
     inventoryDaysLeft,
+  }
+}
+
+/** Loads a Shopify store sales summary across multiple standard windows using one order crawl. */
+export const loadShopifyStoreSalesSummary = async (
+  store: ShopifyStoreConfig,
+  options: {
+    windows: StoreOverviewRangePreset[]
+    includeInventory?: boolean
+  },
+): Promise<ShopifyStoreSalesSummarySnapshot> => {
+  const client = await createShopifyClient(store)
+  const shop = await fetchShopifyShopMetadata(client)
+  const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const now = new Date()
+  const windows = options.windows.map(rangePreset => ({
+    rangePreset,
+    ...resolveStoreOverviewWindow(rangePreset, timeZone, now),
+  }))
+  const widestWindow = windows.reduce((widest, candidate) =>
+    candidate.dayCount > widest.dayCount ? candidate : widest,
+  )
+  const aggregateStart = windows.reduce(
+    (earliest, candidate) => (candidate.start < earliest ? candidate.start : earliest),
+    windows[0].start,
+  )
+  const aggregateEnd = windows.reduce(
+    (latest, candidate) => (candidate.end > latest ? candidate.end : latest),
+    windows[0].end,
+  )
+  const ordersQuery = `created_at:>=${aggregateStart} created_at:<${aggregateEnd} financial_status:paid`
+  const orders = await fetchAllShopifyOrders(client, ordersQuery)
+  let inventoryUnits: number | undefined
+  let inventoryErrorMessage: string | undefined
+
+  if (options.includeInventory !== false) {
+    try {
+      inventoryUnits = await fetchAllShopifyInventoryUnits(client)
+    } catch (error) {
+      inventoryUnits = undefined
+      inventoryErrorMessage =
+        error instanceof Error ? error.message : "Failed to load Shopify inventory totals."
+    }
+  }
+
+  const currencyCode =
+    shop?.currencyCode ??
+    orders[0]?.currentTotalPriceSet?.shopMoney?.currencyCode ??
+    DEFAULT_PLUGIN_CONFIG.currency
+  const summaryWindows = windows.map(window => {
+    const summary = summarizeShopifyOrders(orders, window)
+    return {
+      rangePreset: window.rangePreset,
+      windowLabel: window.windowLabel,
+      ordersCount: summary.ordersCount,
+      unitsSold: summary.unitsSold,
+      revenue: summary.revenue,
+    }
+  })
+  const widestWindowSummary = summaryWindows.find(
+    window => window.rangePreset === widestWindow.rangePreset,
+  )
+  const averageDailyUnits =
+    widestWindowSummary && widestWindow.dayCount > 1
+      ? widestWindowSummary.unitsSold / widestWindow.dayCount
+      : undefined
+  const inventoryDaysLeft =
+    typeof inventoryUnits === "number" && averageDailyUnits && averageDailyUnits > 0
+      ? inventoryUnits / averageDailyUnits
+      : undefined
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: timeZone,
+    currencyCode,
+    windows: summaryWindows,
+    inventoryUnits,
+    inventoryDaysLeft,
+    inventoryErrorMessage,
   }
 }
 

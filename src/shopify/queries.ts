@@ -16,6 +16,7 @@ export const SHOPIFY_ORDERS_PAGE_QUERY = `
         endCursor
       }
       nodes {
+        createdAt
         currentTotalPriceSet {
           shopMoney {
             amount

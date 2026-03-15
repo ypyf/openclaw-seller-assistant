@@ -5,9 +5,10 @@
 > [!WARNING]
 > This project is evolving quickly. Many features are still incomplete, and tool behavior, configuration, and public interfaces may change without preserving backward compatibility between releases.
 
-It packages six seller tools:
+It packages seven seller tools:
 
 - `seller_store_overview`: look up store-level revenue, order volume, units sold, and optional inventory totals for a time window
+- `seller_store_sales_summary`: return a fixed plain-text multi-window store sales summary
 - `seller_inventory_query`: look up current on-hand inventory for an exact SKU, full product title, or title keywords
 - `seller_sales_query`: query recent sales for an exact SKU, full product title, or title keywords
 - `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
@@ -54,6 +55,7 @@ For restricted configs, add the plugin id under `plugins.allow` and list the too
   "tools": {
     "allow": [
       "seller_store_overview",
+      "seller_store_sales_summary",
       "seller_inventory_query",
       "seller_sales_query",
       "seller_quote_builder",
@@ -176,12 +178,13 @@ To use `seller_store_overview` with Shopify, grant the app at least these Admin 
 
 `seller_inventory_query` only needs `read_products`.
 
-`seller_store_overview`, `seller_sales_query`, `seller_restock_signal`, and `seller_campaign_context` use Shopify order data, so they need both `read_products` and `read_orders`.
+`seller_store_overview`, `seller_store_sales_summary`, `seller_sales_query`, `seller_restock_signal`, and `seller_campaign_context` use Shopify order data, so they need both `read_products` and `read_orders`.
 
 Current limitations of the Shopify store overview:
 
 - traffic, conversion, and ad spend are not currently sourced from Shopify
 - inventory cover is only available when inventory totals are included and the selected window spans multiple days
+- standard store overview presets include `today`, `yesterday`, `last_7_days`, `last_30_days`, `last_60_days`, `last_90_days`, `last_180_days`, and `last_365_days`
 
 ## Usage
 
@@ -190,6 +193,10 @@ After the plugin is loaded, ask the agent in natural language:
 - "How much did my store sell today?"
 - "How much did my store sell yesterday?"
 - "Show store overview for my default store over the last 7 days."
+- "Show a store sales summary for my default store."
+- "How did shopify-us sell today, yesterday, last 7 days, and last year?"
+- "Show store overview for my default store over the last 30 days."
+- "Show store overview for my default store over the last year."
 - "Show store overview for store shopify-us from 2026-03-01 to 2026-03-07."
 - "Check store health for my default store."
 - "How much inventory does Short sleeve t-shirt have in my default store?"
@@ -214,6 +221,8 @@ After the plugin is loaded, ask the agent in natural language:
 - Ambiguous title-keyword searches return candidate choices instead of auto-selecting a product.
 - SKU matching is exact. SKU prefixes or partial SKU fragments are not supported.
 - `seller_store_overview` is the store-level factual tool for store revenue, order count, units sold, and optional inventory coverage.
+- `seller_store_sales_summary` is the canonical tool for fixed plain-text multi-window store sales summaries.
+- Store sales summary routing is skill-led: the `store-sales-summary` skill should call `seller_store_sales_summary` and keep the tool output as the final answer shape.
 - Sales query is a product-level factual capability: use `seller_sales_query` when the user asks how much a product sold recently.
 - Store analysis is skill-led: the `store-analysis` skill should use `seller_store_overview` facts before giving any diagnosis or next-step advice.
 - Campaign planning is skill-led: `seller_campaign_context` loads planning context, and the campaign-planning skill should ask for any missing required inputs before giving the final recommendation.
