@@ -3,9 +3,7 @@
   "name": "Seller Assistant",
   "description": "Seller assistant tools for pricing, RFQ replies, inventory checks, and campaign planning.",
   "version": "0.2.0",
-  "skills": [
-    "./skills"
-  ],
+  "skills": ["./skills"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -46,11 +44,7 @@
         "type": "string",
         "description": "Shared response tone for seller-facing draft outputs.",
         "default": "consultative",
-        "enum": [
-          "concise",
-          "consultative",
-          "premium"
-        ]
+        "enum": ["concise", "consultative", "premium"]
       },
       "defaultStoreId": {
         "type": "string",
@@ -100,13 +94,7 @@
                   "description": "Optional store-level sales lookback override in days. If omitted, fall back to the plugin-level salesLookbackDays."
                 }
               },
-              "required": [
-                "id",
-                "name",
-                "storeDomain",
-                "clientId",
-                "clientSecretEnv"
-              ]
+              "required": ["id", "name", "storeDomain", "clientId", "clientSecretEnv"]
             }
           },
           "amazon": {
@@ -123,11 +111,7 @@
                 },
                 "region": {
                   "type": "string",
-                  "enum": [
-                    "na",
-                    "eu",
-                    "fe"
-                  ]
+                  "enum": ["na", "eu", "fe"]
                 },
                 "marketplaceId": {
                   "type": "string"

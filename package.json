@@ -37,8 +37,13 @@
       "./index.ts"
     ]
   },
+  "scripts": {
+    "format": "prettier \"**/*.{js,jsx,ts,tsx,json,html,css,md}\" --write",
+    "format:check": "prettier \"**/*.{js,jsx,ts,tsx,json,html,css,md}\" --check"
+  },
   "devDependencies": {
     "openclaw": "^2026.3.12",
+    "prettier": "^3.8.1",
     "typescript": "^5.9.3"
   }
 }

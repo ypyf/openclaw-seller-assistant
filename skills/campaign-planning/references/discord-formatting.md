@@ -3,6 +3,7 @@
 Format structured responses for Discord using Discord embeds instead of Markdown tables.
 
 Rules:
+
 - Do not output Markdown tables.
 - Use embeds with fields for structured data.
 - Return valid JSON shaped like `{ "embeds": [...] }`.

@@ -8,6 +8,7 @@ description: "Analyze store performance with the seller_store_overview tool. Use
 If the user asks follow-up questions such as "how does this look", "is this normal", "what's the problem", or "what should we do next", use `seller_store_overview` first, then give a short analysis.
 
 Answer in this order:
+
 1. Restate the key facts and time window.
 2. Give a concise judgment.
 3. Give practical next steps.
