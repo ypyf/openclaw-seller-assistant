@@ -28,19 +28,6 @@
         "description": "Inventory days-of-cover threshold that triggers low-stock warnings.",
         "default": 14
       },
-      "supplierLeadDays": {
-        "type": "number",
-        "description": "Shared supplier lead time in days used by replenishment decisions when the user does not provide one."
-      },
-      "safetyStockDays": {
-        "type": "number",
-        "description": "Shared safety stock buffer in days used by replenishment decisions when the user does not provide one."
-      },
-      "salesLookbackDays": {
-        "type": "number",
-        "description": "Shared lookback window in days used to estimate average daily sales for Shopify-backed replenishment, discount, and clearance decisions.",
-        "default": 30
-      },
       "decisionPolicy": {
         "type": "object",
         "description": "Optional policy overrides for replenishment, discount, and clearance thresholds.",
@@ -137,17 +124,24 @@
                   "type": "string",
                   "description": "Environment variable name on the OpenClaw host that contains the merchant-owned Shopify app client secret."
                 },
-                "supplierLeadDays": {
-                  "type": "number",
-                  "description": "Optional store-level supplier lead time override in days. If omitted, fall back to the plugin-level supplierLeadDays."
-                },
-                "safetyStockDays": {
-                  "type": "number",
-                  "description": "Optional store-level safety stock override in days. If omitted, fall back to the plugin-level safetyStockDays."
-                },
-                "salesLookbackDays": {
-                  "type": "number",
-                  "description": "Optional store-level sales lookback override in days. If omitted, fall back to the plugin-level salesLookbackDays."
+                "operations": {
+                  "type": "object",
+                  "description": "Store-level operational inputs for replenishment and sales lookback behavior.",
+                  "additionalProperties": false,
+                  "properties": {
+                    "supplierLeadDays": {
+                      "type": "number",
+                      "description": "Optional supplier lead time in days for replenishment decisions on this store."
+                    },
+                    "safetyStockDays": {
+                      "type": "number",
+                      "description": "Optional safety stock buffer in days for replenishment decisions on this store."
+                    },
+                    "salesLookbackDays": {
+                      "type": "number",
+                      "description": "Optional sales lookback window in days for Shopify-backed sales and product decisions on this store."
+                    }
+                  }
                 }
               },
               "required": ["id", "name", "storeDomain", "clientId", "clientSecretEnv"]

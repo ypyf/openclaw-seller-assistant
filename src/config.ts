@@ -44,6 +44,12 @@ export const DEFAULT_PRODUCT_DECISION_POLICY: ProductDecisionPolicy = {
   veryLowLookbackUnitsFactor: 0.1,
 }
 
+export type ShopifyStoreOperationsConfig = {
+  supplierLeadDays?: number
+  safetyStockDays?: number
+  salesLookbackDays?: number
+}
+
 /** Shopify store connection settings plus optional store-level operational overrides. */
 export type ShopifyStoreConfig = {
   id: string
@@ -51,9 +57,7 @@ export type ShopifyStoreConfig = {
   storeDomain: string
   clientId: string
   clientSecretEnv: string
-  supplierLeadDays?: number
-  safetyStockDays?: number
-  salesLookbackDays?: number
+  operations?: ShopifyStoreOperationsConfig
 }
 
 /** A configured store entry resolved to a supported platform shape. */
@@ -66,12 +70,9 @@ type RawPluginConfig = {
   locale?: string
   targetMarginFloorPct?: number
   lowInventoryDays?: number
-  salesLookbackDays?: number
   decisionPolicy?: RawProductDecisionPolicy
   responseTone?: "concise" | "consultative" | "premium"
   defaultStoreId?: string
-  supplierLeadDays?: number
-  safetyStockDays?: number
   stores?: {
     shopify?: ShopifyStoreConfig[]
     amazon?: Record<string, unknown>[]
@@ -85,13 +86,10 @@ export type PluginConfig = {
   /** Display locale used when formatting dates, numbers, and currency output. */
   locale: string
   lowInventoryDays: number
-  salesLookbackDays: number
   decisionPolicy: ProductDecisionPolicy
   responseTone: "concise" | "consultative" | "premium"
   targetMarginFloorPct?: number
   defaultStoreId?: string
-  supplierLeadDays?: number
-  safetyStockDays?: number
   stores?: {
     shopify?: ShopifyStoreConfig[]
     amazon?: Record<string, unknown>[]
@@ -167,7 +165,6 @@ export const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): Pl
     currency: rawConfig.currency ?? DEFAULT_PLUGIN_CONFIG.currency,
     locale: rawConfig.locale ?? DEFAULT_PLUGIN_CONFIG.locale,
     lowInventoryDays: rawConfig.lowInventoryDays ?? DEFAULT_PLUGIN_CONFIG.lowInventoryDays,
-    salesLookbackDays: rawConfig.salesLookbackDays ?? DEFAULT_PLUGIN_CONFIG.salesLookbackDays,
     decisionPolicy: normalizeProductDecisionPolicy(rawConfig.decisionPolicy),
     responseTone: rawConfig.responseTone ?? DEFAULT_PLUGIN_CONFIG.responseTone,
     targetMarginFloorPct:
@@ -204,13 +201,13 @@ export const findConfiguredStore = (
   return groupedStores[0] ?? null
 }
 
-/** Reads a numeric store-level setting when present and returns undefined otherwise. */
-export const getStoreSettingNumber = (
+/** Reads a numeric store-level operation setting when present and returns undefined otherwise. */
+export const getStoreOperationNumber = (
   configuredStore: ConfiguredStore | null,
   key: "supplierLeadDays" | "safetyStockDays" | "salesLookbackDays",
 ) => {
   if (configuredStore?.platform === "shopify") {
-    const storeValue = configuredStore.store[key]
+    const storeValue = configuredStore.store.operations?.[key]
     if (typeof storeValue === "number" && Number.isFinite(storeValue)) {
       return storeValue
     }

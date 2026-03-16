@@ -95,9 +95,6 @@ Example:
         "config": {
           "defaultStoreId": "shopify-us",
           "currency": "USD",
-          "supplierLeadDays": 7,
-          "safetyStockDays": 5,
-          "salesLookbackDays": 30,
           "decisionPolicy": {
             "insufficientDataMinUnitsSold": 3,
             "insufficientDataMinLookbackDays": 14,
@@ -116,9 +113,11 @@ Example:
                 "storeDomain": "your-store.myshopify.com",
                 "clientId": "your_shopify_client_id",
                 "clientSecretEnv": "SHOPIFY_CLIENT_SECRET",
-                "supplierLeadDays": 10,
-                "safetyStockDays": 7,
-                "salesLookbackDays": 21
+                "operations": {
+                  "supplierLeadDays": 10,
+                  "safetyStockDays": 7,
+                  "salesLookbackDays": 21
+                }
               }
             ]
           }
@@ -135,9 +134,11 @@ In that structure:
 - `defaultStoreId` is optional when only one store is configured. If set, it should match one store `id` and is used when the user does not specify a store.
 - `currency` is a fallback display currency for outputs that do not have an explicit business currency from source data. It does not override Shopify's actual store or order currency.
 - `locale` controls date, number, and currency formatting for tool output
-- store-level `supplierLeadDays`, `safetyStockDays`, and `salesLookbackDays` override the plugin-level defaults for that store
-- plugin-level `supplierLeadDays` and `safetyStockDays` remain shared fallbacks for replenishment decisions
-- plugin-level `salesLookbackDays` remains the shared fallback sales window for Shopify-backed sales and product decision tools
+- `stores.shopify[].operations` is the store-level operational config for replenishment and sales lookback behavior
+- `stores.shopify[].operations.supplierLeadDays` and `stores.shopify[].operations.safetyStockDays` are used by replenishment decisions when the user does not provide those inputs
+- `stores.shopify[].operations.salesLookbackDays` overrides the built-in 30-day lookback for Shopify-backed sales and product decision tools
+- there is no built-in default for `supplierLeadDays` or `safetyStockDays`; if both are missing and the user does not provide them, replenishment asks for input
+- legacy top-level or flat store-level `supplierLeadDays`, `safetyStockDays`, and `salesLookbackDays` fields are no longer supported
 - `decisionPolicy` is the shared policy object for replenishment / discount / clearance thresholds. Omit it to use built-in defaults, or override only the fields you want to tune.
 
 Built-in defaults when a config value is omitted:
@@ -145,8 +146,8 @@ Built-in defaults when a config value is omitted:
 - `currency`: `USD`
 - `locale`: `en-US`
 - `lowInventoryDays`: `14`
-- `salesLookbackDays`: `30`
 - `responseTone`: `consultative`
+- `stores.shopify[].operations.salesLookbackDays`: `30`
 - `decisionPolicy.weakDemandDailySalesThreshold`: `0.3`
 - `decisionPolicy.healthyDemandDailySalesThreshold`: `1`
 - `decisionPolicy.insufficientDataMinLookbackDays`: `14`

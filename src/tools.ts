@@ -1,6 +1,11 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
 import { Type, type Static } from "@sinclair/typebox"
-import { findConfiguredStore, getStoreSettingNumber, type PluginConfig } from "./config.js"
+import {
+  DEFAULT_PLUGIN_CONFIG,
+  findConfiguredStore,
+  getStoreOperationNumber,
+  type PluginConfig,
+} from "./config.js"
 import {
   evaluateClearanceDecision,
   evaluateDiscountDecision,
@@ -170,7 +175,7 @@ const SellerSalesLookupParamsSchema = Type.Object(
     salesLookbackDays: Type.Optional(
       Type.Number({
         description:
-          "Optional sales lookback window for Shopify data loading. If omitted, use the configured default lookback window.",
+          "Optional sales lookback window for Shopify data loading. If omitted, use store operations.salesLookbackDays or the built-in 30-day default.",
       }),
     ),
   },
@@ -241,22 +246,20 @@ type SellerClearanceDecisionParams = Static<typeof SellerClearanceDecisionParams
 
 const resolveOptionalConfiguredNumber = (
   configuredStore: ReturnType<typeof findConfiguredStore>,
-  key: Parameters<typeof getStoreSettingNumber>[1],
-  pluginFallback?: number,
-) => getStoreSettingNumber(configuredStore, key) ?? pluginFallback
+  key: Parameters<typeof getStoreOperationNumber>[1],
+) => getStoreOperationNumber(configuredStore, key)
 
 const resolveSalesLookbackDays = (
   value: unknown,
   configuredStore: ReturnType<typeof findConfiguredStore>,
-  pluginConfig: PluginConfig,
 ) =>
   Math.max(
     1,
     Math.round(
       toNumber(
         value,
-        getStoreSettingNumber(configuredStore, "salesLookbackDays") ??
-          pluginConfig.salesLookbackDays,
+        getStoreOperationNumber(configuredStore, "salesLookbackDays") ??
+          DEFAULT_PLUGIN_CONFIG.salesLookbackDays,
       ),
     ),
   )
@@ -837,11 +840,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      const salesLookbackDays = resolveSalesLookbackDays(
-        params.salesLookbackDays,
-        configuredStore,
-        pluginConfig,
-      )
+      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
       const snapshot = await loadShopifySalesSnapshot(
         configuredStore.store,
         params.productRef,
@@ -875,11 +874,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      const salesLookbackDays = resolveSalesLookbackDays(
-        params.salesLookbackDays,
-        configuredStore,
-        pluginConfig,
-      )
+      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
       const snapshot = await loadShopifyProductActionSnapshot(
         configuredStore.store,
         params.productRef,
@@ -897,18 +892,10 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
 
       const configuredSupplierLeadDays =
         params.supplierLeadDays ??
-        resolveOptionalConfiguredNumber(
-          configuredStore,
-          "supplierLeadDays",
-          pluginConfig.supplierLeadDays,
-        )
+        resolveOptionalConfiguredNumber(configuredStore, "supplierLeadDays")
       const configuredSafetyStockDays =
         params.safetyStockDays ??
-        resolveOptionalConfiguredNumber(
-          configuredStore,
-          "safetyStockDays",
-          pluginConfig.safetyStockDays,
-        )
+        resolveOptionalConfiguredNumber(configuredStore, "safetyStockDays")
       const replenishmentInputs = resolveProductActionReplenishmentInputs({
         supplierLeadDays: configuredSupplierLeadDays,
         safetyStockDays: configuredSafetyStockDays,
@@ -953,11 +940,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      const salesLookbackDays = resolveSalesLookbackDays(
-        params.salesLookbackDays,
-        configuredStore,
-        pluginConfig,
-      )
+      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
       const snapshot = await loadShopifyProductActionSnapshot(
         configuredStore.store,
         params.productRef,
@@ -1005,11 +988,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      const salesLookbackDays = resolveSalesLookbackDays(
-        params.salesLookbackDays,
-        configuredStore,
-        pluginConfig,
-      )
+      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
       const snapshot = await loadShopifyProductActionSnapshot(
         configuredStore.store,
         params.productRef,
