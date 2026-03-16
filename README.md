@@ -198,9 +198,17 @@ To use `seller_store_overview` with Shopify, grant the app at least these Admin 
 - `read_orders`
 - `read_products`
 
-`seller_inventory_query` only needs `read_products`.
+Other Shopify tools follow these same permission rules:
 
-`seller_store_overview`, `seller_store_sales_summary`, `seller_sales_query`, `seller_replenishment_decision`, `seller_discount_decision`, and `seller_clearance_decision` use Shopify order data, so they need both `read_products` and `read_orders`.
+- `seller_inventory_query` only needs `read_products`.
+- `seller_store_sales_summary`, `seller_sales_query`, and `seller_replenishment_decision` use the same order and product data as `seller_store_overview`, so they also need both `read_orders` and `read_products`.
+- `seller_discount_decision` and `seller_clearance_decision` also need both `read_orders` and `read_products`.
+
+Shopify also classifies `Orders` as protected customer data. If order queries fail even though `read_orders` is configured, check whether the app still needs protected customer data access enabled or approved in Shopify's app configuration flow for its app type. Shopify notes that GraphQL requests to unapproved protected types can return HTTP `200` with an error in the `errors` hash instead of normal order data.
+
+By default, Shopify order APIs expose only the last 60 days of orders. This plugin supports longer windows such as `last_90_days`, `last_180_days`, `last_365_days`, and custom date ranges, so apps that need older orders should also request and add `read_all_orders` together with `read_orders`.
+
+For `seller_discount_decision` and `seller_clearance_decision`, `read_products` is required to access `InventoryItem.unitCost` for cost-aware pricing guidance.
 
 Current limitations of the Shopify store overview:
 
@@ -236,7 +244,7 @@ More examples are available in [Usage Examples](./docs/usage-examples.md).
 - Sales query is a product-level factual capability: use `seller_sales_query` when the user asks how much a product sold recently.
 - Product decisions are skill-led: the `product-decision` skill should call `seller_replenishment_decision`, `seller_discount_decision`, and/or `seller_clearance_decision` depending on the user's ask, and aggregate outputs for multi-part questions.
 - `seller_replenishment_decision`, `seller_discount_decision`, and `seller_clearance_decision` support inventory-and-pricing decisions only. They do not answer paid-promotion or ad-investment questions.
-- Discount and clearance pricing guidance require margin data. When cost access is unavailable, those tools should degrade to unavailable margin guidance rather than fail.
+- Discount and clearance pricing guidance require Shopify cost access. If Shopify product cost permission is missing, those tools should ask the user to enable it rather than invent alternate data sources or silently downgrade the pricing result.
 - Store analysis is skill-led: the `store-analysis` skill should use `seller_store_overview` facts before giving any diagnosis or next-step advice.
 - Campaign planning remains skill-led and should stay focused on promotion strategy, not replenishment / discount / clearance ownership.
 
