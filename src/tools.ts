@@ -1,22 +1,18 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
 import { Type, type Static } from "@sinclair/typebox"
+import { findConfiguredStore, getStoreSettingNumber, type PluginConfig } from "./config.js"
 import {
-  DEFAULT_PLUGIN_CONFIG,
-  findConfiguredStore,
-  getStoreSettingNumber,
-  type PluginConfig,
-} from "./config.js"
-import { createShopifyClient } from "./shopify/client.js"
-import {
-  evaluateRestockSignal,
-  loadShopifyCampaignSnapshot,
+  evaluateClearanceDecision,
+  evaluateDiscountDecision,
+  evaluateReplenishmentDecision,
   loadShopifyInventorySnapshot,
-  loadShopifyInventorySnapshotFromClient,
-  loadShopifyProductSnapshotFromClient,
-  loadShopifyRestockSnapshotFromClient,
+  loadShopifyProductActionSnapshot,
   loadShopifyStoreSalesSummary,
   loadShopifyStoreOverview,
-  type RestockSignal,
+  type ClearanceDecisionEvaluation,
+  type DiscountDecisionEvaluation,
+  type ProductDecisionDemandStatus,
+  type ReplenishmentDecisionEvaluation,
   type ShopifyInventorySnapshot,
   type ShopifySalesSnapshot,
   type ShopifyStoreSalesSummarySnapshot,
@@ -27,12 +23,11 @@ import {
 import {
   currency,
   formatDateTime,
-  formatObjectiveLabel,
+  grossMarginPct,
+  minimumPriceForGrossMargin,
+  needsInputResult,
   optionalNumber,
   percentage,
-  ready,
-  resolveNonNegativeNumber,
-  resolvePositiveNumber,
   textResult,
   toNumber,
 } from "./utils.js"
@@ -182,7 +177,7 @@ const SellerSalesLookupParamsSchema = Type.Object(
   { additionalProperties: false },
 )
 
-const SellerRestockSignalParamsSchema = Type.Object(
+const SellerReplenishmentDecisionParamsSchema = Type.Object(
   {
     storeId: Type.Optional(
       Type.String({
@@ -190,59 +185,47 @@ const SellerRestockSignalParamsSchema = Type.Object(
           "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
       }),
     ),
-    sku: Type.String({
+    productRef: Type.String({
       description:
-        "Exact SKU, full product title, or product title keywords to search in Shopify before calculating restock urgency.",
+        "Exact SKU, full product title, or product title keywords to search in Shopify before calculating replenishment guidance.",
     }),
-    onHandUnits: Type.Optional(Type.Number()),
-    dailySalesUnits: Type.Optional(Type.Number()),
+    salesLookbackDays: Type.Optional(Type.Number()),
     supplierLeadDays: Type.Optional(Type.Number()),
     safetyStockDays: Type.Optional(Type.Number()),
+  },
+  { additionalProperties: false },
+)
+
+const SellerDiscountDecisionParamsSchema = Type.Object(
+  {
+    storeId: Type.Optional(
+      Type.String({
+        description:
+          "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
+      }),
+    ),
+    productRef: Type.String({
+      description:
+        "Exact SKU, full product title, or product title keywords to search in Shopify before calculating discount guidance.",
+    }),
     salesLookbackDays: Type.Optional(Type.Number()),
   },
   { additionalProperties: false },
 )
 
-const SellerCampaignPlanParamsSchema = Type.Object(
+const SellerClearanceDecisionParamsSchema = Type.Object(
   {
-    objective: Type.Union([
-      Type.Literal("clear_inventory"),
-      Type.Literal("grow_revenue"),
-      Type.Literal("launch_product"),
-      Type.Literal("recover_conversion"),
-    ]),
     storeId: Type.Optional(
       Type.String({
         description:
           "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
       }),
     ),
-    heroSku: Type.String({
+    productRef: Type.String({
       description:
-        "Exact SKU, full product title, or product title keywords to search in Shopify before loading campaign planning context.",
+        "Exact SKU, full product title, or product title keywords to search in Shopify before calculating clearance guidance.",
     }),
-    currentMarginPct: Type.Optional(
-      Type.Number({
-        description:
-          "Optional manual gross margin override. Use only when Shopify cannot calculate margin from price and unit cost.",
-      }),
-    ),
-    inventoryDaysLeft: Type.Optional(
-      Type.Number({
-        description:
-          "Optional manual inventory cover override. Normally this should be calculated from Shopify inventory and recent sales.",
-      }),
-    ),
-    channel: Type.String({
-      description: "Primary campaign channel, for example Meta ads, Google Shopping, or email.",
-    }),
-    constraint: Type.Optional(Type.String()),
-    salesLookbackDays: Type.Optional(
-      Type.Number({
-        description:
-          "Optional sales lookback window for Shopify data loading. If omitted, use the configured default lookback window.",
-      }),
-    ),
+    salesLookbackDays: Type.Optional(Type.Number()),
   },
   { additionalProperties: false },
 )
@@ -252,28 +235,9 @@ type SellerStoreSalesSummaryParams = Static<typeof SellerStoreSalesSummaryParams
 type SellerQuoteBuilderParams = Static<typeof SellerQuoteBuilderParamsSchema>
 type SellerInventoryLookupParams = Static<typeof SellerInventoryLookupParamsSchema>
 type SellerSalesLookupParams = Static<typeof SellerSalesLookupParamsSchema>
-type SellerRestockSignalParams = Static<typeof SellerRestockSignalParamsSchema>
-type SellerCampaignPlanParams = Static<typeof SellerCampaignPlanParamsSchema>
-type CampaignContextViewModel = {
-  objective: string
-  heroSku: string
-  channel: string
-  currentMarginPct: number
-  inventoryDaysLeft: number
-  currency: string
-  locale: string
-  productName: string
-  source: string
-  retrievedAtIso: string
-  storeName: string
-  timezone: string
-  lookbackDays?: number
-  constraint?: string
-  currencyCode?: string | null
-  averageUnitPrice?: number
-  averageUnitCost?: number | null
-  targetMarginFloorPct?: number
-}
+type SellerReplenishmentDecisionParams = Static<typeof SellerReplenishmentDecisionParamsSchema>
+type SellerDiscountDecisionParams = Static<typeof SellerDiscountDecisionParamsSchema>
+type SellerClearanceDecisionParams = Static<typeof SellerClearanceDecisionParamsSchema>
 
 const resolveOptionalConfiguredNumber = (
   configuredStore: ReturnType<typeof findConfiguredStore>,
@@ -302,31 +266,6 @@ const resolveStoreSalesSummaryWindows = (windows?: StoreOverviewRangePreset[]) =
   return STORE_SALES_SUMMARY_WINDOW_ORDER.filter(window => requestedWindows.has(window))
 }
 
-const formatRestockSignal = (input: RestockSignal) =>
-  [
-    `Source: ${input.source}`,
-    `Retrieved at: ${formatDateTime(input.retrievedAtIso, input.locale, input.timezone)}`,
-    `Store: ${input.storeName}`,
-    `Product: ${input.productName}`,
-    `SKU: ${input.sku}`,
-    `On-hand units: ${Math.round(input.onHandUnits)}`,
-    `Average daily sales: ${input.dailySalesUnits.toFixed(2)}`,
-    Number.isFinite(input.daysLeft)
-      ? `Days of cover: ${input.daysLeft.toFixed(1)}`
-      : "Days of cover: n/a (no recent sales detected)",
-    `Supplier lead time: ${input.supplierLeadDays} days`,
-    `Safety stock: ${input.safetyStockDays} days`,
-    `Reorder point: ${Math.ceil(input.reorderPointUnits)} units`,
-    typeof input.lookbackDays === "number"
-      ? `Sales lookback: last ${input.lookbackDays} days`
-      : null,
-    `Urgency: ${input.urgency}`,
-    "",
-    input.action,
-  ]
-    .filter(Boolean)
-    .join("\n")
-
 const formatInventoryLookup = (input: ShopifyInventorySnapshot) =>
   [
     `Source: ${input.source}`,
@@ -353,44 +292,239 @@ const formatSalesLookup = (input: ShopifySalesSnapshot) =>
     .filter(Boolean)
     .join("\n")
 
-const formatCampaignContext = (input: CampaignContextViewModel) => {
-  const marginBuffer =
-    typeof input.targetMarginFloorPct === "number"
-      ? input.currentMarginPct - input.targetMarginFloorPct
-      : null
+const formatInventoryCover = (value: number) =>
+  Number.isFinite(value) ? `${value.toFixed(1)} days` : "n/a (no recent sales detected)"
 
-  return [
-    `Source: ${input.source}`,
-    `Retrieved at: ${formatDateTime(input.retrievedAtIso, input.locale, input.timezone)}`,
-    `Store: ${input.storeName}`,
-    `Objective: ${formatObjectiveLabel(input.objective)}`,
-    `Hero SKU: ${input.heroSku}`,
-    `Product: ${input.productName}`,
-    `Primary channel: ${input.channel}`,
-    typeof input.averageUnitPrice === "number" && input.averageUnitPrice > 0
-      ? `Average unit price: ${currency(input.averageUnitPrice, input.currencyCode ?? input.currency, input.locale)}`
-      : null,
-    typeof input.averageUnitCost === "number" && input.averageUnitCost > 0
-      ? `Average unit cost: ${currency(input.averageUnitCost, input.currencyCode ?? input.currency, input.locale)}`
-      : null,
-    typeof input.lookbackDays === "number"
-      ? `Sales lookback: last ${input.lookbackDays} days`
-      : null,
-    `Current margin: ${percentage(input.currentMarginPct)}`,
-    `Inventory cover: ${input.inventoryDaysLeft.toFixed(1)} days`,
-    marginBuffer !== null
-      ? `Margin buffer vs configured floor: ${marginBuffer >= 0 ? "+" : ""}${percentage(marginBuffer)}`
-      : null,
-    input.constraint ? `Constraint: ${input.constraint}` : null,
-    "",
-    "Planning context:",
-    "- This tool returns campaign inputs and operating constraints for the campaign-planning skill.",
-    "- Ask the user for any missing required campaign inputs before giving a final plan.",
-    "- Required inputs for a final plan are objective, hero SKU/title, channel, current margin, and inventory cover.",
-  ]
-    .filter(Boolean)
-    .join("\n")
+const formatMarginValue = (value: number | null) =>
+  typeof value === "number" ? percentage(value) : "unavailable"
+
+const formatMarginFloorValue = (value: number | null, hasValidMarginFloor: boolean) => {
+  if (typeof value !== "number") {
+    return "unavailable"
+  }
+  return hasValidMarginFloor
+    ? percentage(value)
+    : `invalid (${percentage(value)} is not achievable as a gross margin floor)`
 }
+
+const formatDemandStatus = (value: ProductDecisionDemandStatus) => value
+
+const formatProductActionInvalidInputPrompt = (invalidParameters: string[]) => {
+  if (
+    invalidParameters.includes("supplierLeadDays") &&
+    invalidParameters.includes("safetyStockDays")
+  ) {
+    return 'Ask the user to correct supplier lead time and safety stock. "supplierLeadDays" must be positive and "safetyStockDays" must be non-negative.'
+  }
+  if (invalidParameters.includes("supplierLeadDays")) {
+    return 'Ask the user to correct supplier lead time. "supplierLeadDays" must be a positive number.'
+  }
+  return 'Ask the user to correct safety stock. "safetyStockDays" must be a non-negative number.'
+}
+
+const formatProductActionMissingInputPrompt = (missingParameters: string[]) => {
+  if (
+    missingParameters.includes("supplierLeadDays") &&
+    missingParameters.includes("safetyStockDays")
+  ) {
+    return 'Ask the user to provide supplier lead time and safety stock. "supplierLeadDays" must be a positive number and "safetyStockDays" must be a non-negative number.'
+  }
+  if (missingParameters.includes("supplierLeadDays")) {
+    return 'Ask the user to provide supplier lead time. "supplierLeadDays" must be a positive number.'
+  }
+  return 'Ask the user to provide safety stock. "safetyStockDays" must be a non-negative number.'
+}
+
+export type ProductActionReplenishmentInputResolution =
+  | {
+      kind: "ready"
+      supplierLeadDays: number
+      safetyStockDays: number
+    }
+  | {
+      kind: "needs_input"
+      userPrompt: string
+      missingParameters: string[]
+      invalidParameters: Array<{
+        name: string
+        issue: string
+      }>
+    }
+
+export const resolveProductActionReplenishmentInputs = (input: {
+  supplierLeadDays?: number
+  safetyStockDays?: number
+}): ProductActionReplenishmentInputResolution => {
+  const { supplierLeadDays, safetyStockDays } = input
+  const normalizedSupplierLeadDays =
+    typeof supplierLeadDays === "number" && supplierLeadDays > 0 ? supplierLeadDays : undefined
+  const normalizedSafetyStockDays =
+    typeof safetyStockDays === "number" && safetyStockDays >= 0 ? safetyStockDays : undefined
+
+  const invalidParameters = [
+    typeof supplierLeadDays === "number" && supplierLeadDays <= 0
+      ? {
+          name: "supplierLeadDays",
+          issue: "must be a positive number",
+        }
+      : null,
+    typeof safetyStockDays === "number" && safetyStockDays < 0
+      ? {
+          name: "safetyStockDays",
+          issue: "must be a non-negative number",
+        }
+      : null,
+  ].filter((value): value is { name: string; issue: string } => value !== null)
+
+  if (invalidParameters.length > 0) {
+    return {
+      kind: "needs_input",
+      userPrompt: formatProductActionInvalidInputPrompt(
+        invalidParameters.map(parameter => parameter.name),
+      ),
+      missingParameters: [],
+      invalidParameters,
+    }
+  }
+
+  const missingParameters = [
+    typeof supplierLeadDays === "number" ? null : "supplierLeadDays",
+    typeof safetyStockDays === "number" ? null : "safetyStockDays",
+  ].filter((value): value is string => value !== null)
+
+  if (missingParameters.length > 0) {
+    return {
+      kind: "needs_input",
+      userPrompt: formatProductActionMissingInputPrompt(missingParameters),
+      missingParameters,
+      invalidParameters: [],
+    }
+  }
+
+  if (
+    typeof normalizedSupplierLeadDays !== "number" ||
+    typeof normalizedSafetyStockDays !== "number"
+  ) {
+    return {
+      kind: "needs_input",
+      userPrompt: formatProductActionMissingInputPrompt(["supplierLeadDays", "safetyStockDays"]),
+      missingParameters: ["supplierLeadDays", "safetyStockDays"],
+      invalidParameters: [],
+    }
+  }
+
+  return {
+    kind: "ready",
+    supplierLeadDays: normalizedSupplierLeadDays,
+    safetyStockDays: normalizedSafetyStockDays,
+  }
+}
+
+const formatProductDecisionHeader = (input: {
+  storeName: string
+  productName: string
+  sku: string
+  lookbackDays: number
+  dailySalesUnits: number
+  demandStatus: ProductDecisionDemandStatus
+  unitsSold: number
+  onHandUnits: number
+  inventoryDaysLeft: number
+}) => [
+  `Store: ${input.storeName}`,
+  `Product: ${input.productName}`,
+  `SKU: ${input.sku}`,
+  `Sales lookback: last ${input.lookbackDays} days`,
+  `Average daily sales: ${input.dailySalesUnits.toFixed(2)}`,
+  `Demand status: ${formatDemandStatus(input.demandStatus)}`,
+  `Estimated units sold: ${Math.round(input.unitsSold)}`,
+  `On-hand units: ${Math.round(input.onHandUnits)}`,
+  `Inventory cover: ${formatInventoryCover(input.inventoryDaysLeft)}`,
+]
+
+const formatDiscountGuidance = (
+  input: DiscountDecisionEvaluation,
+  options: { locale: string; fallbackCurrency: string },
+) => {
+  if (
+    input.discountDecision !== "test_discount" ||
+    input.minimumAllowedUnitPrice === null ||
+    input.maximumDiscountPctFromAveragePrice === null
+  ) {
+    return ""
+  }
+  return ` Do not price below ${currency(input.minimumAllowedUnitPrice, input.currencyCode ?? options.fallbackCurrency, options.locale)} per unit${input.maximumDiscountPctFromAveragePrice > 0 ? ` (about ${input.maximumDiscountPctFromAveragePrice.toFixed(1)}% below the current average price)` : ""}.`
+}
+
+const formatClearanceGuidance = (
+  input: ClearanceDecisionEvaluation,
+  options: { locale: string; fallbackCurrency: string },
+) => {
+  if (
+    (input.clearanceDecision !== "clear_inventory" &&
+      input.clearanceDecision !== "review_for_clearance") ||
+    input.minimumAllowedUnitPrice === null
+  ) {
+    return ""
+  }
+  const priceText = currency(
+    input.minimumAllowedUnitPrice,
+    input.currencyCode ?? options.fallbackCurrency,
+    options.locale,
+  )
+  const discountText =
+    input.maximumDiscountPctFromAveragePrice !== null &&
+    input.maximumDiscountPctFromAveragePrice > 0
+      ? ` (about ${input.maximumDiscountPctFromAveragePrice.toFixed(1)}% below the current average price)`
+      : ""
+  if (input.clearanceDecision === "clear_inventory") {
+    return ` Use ${priceText} per unit as the clearance floor${discountText}.`
+  }
+  if (
+    input.clearanceReason.includes("pricing guidance is unavailable") ||
+    input.clearanceReason.includes("pricing should stay above")
+  ) {
+    return ""
+  }
+  return ` Any clearance pricing should stay above ${priceText} per unit${discountText}.`
+}
+
+const formatReplenishmentDecision = (input: ReplenishmentDecisionEvaluation) =>
+  [
+    ...formatProductDecisionHeader(input),
+    `Target stock level: ${Math.round(input.targetStockUnits)}`,
+    `Recommended reorder quantity: ${Math.round(input.recommendedReorderUnits)}`,
+    "",
+    `Replenishment: ${input.replenishmentReason}`,
+  ].join("\n")
+
+const formatDiscountDecision = (
+  input: DiscountDecisionEvaluation,
+  options: { locale: string; fallbackCurrency: string },
+) =>
+  [
+    ...formatProductDecisionHeader(input),
+    input.currentMarginPct === null
+      ? "Current margin: unavailable"
+      : `Current margin: ${formatMarginValue(input.currentMarginPct)}`,
+    `Margin floor: ${formatMarginFloorValue(input.marginFloorPct, input.hasValidMarginFloor)}`,
+    "",
+    `Discount: ${input.discountReason}${formatDiscountGuidance(input, options)}`,
+  ].join("\n")
+
+const formatClearanceDecision = (
+  input: ClearanceDecisionEvaluation,
+  options: { locale: string; fallbackCurrency: string },
+) =>
+  [
+    ...formatProductDecisionHeader(input),
+    input.currentMarginPct === null
+      ? "Current margin: unavailable"
+      : `Current margin: ${formatMarginValue(input.currentMarginPct)}`,
+    `Margin floor: ${formatMarginFloorValue(input.marginFloorPct, input.hasValidMarginFloor)}`,
+    "",
+    `Clearance: ${input.clearanceReason}${formatClearanceGuidance(input, options)}`,
+  ].join("\n")
 
 const formatStoreOverview = (input: ShopifyStoreOverviewSnapshot, options: { locale: string }) => {
   return [
@@ -457,7 +591,7 @@ const formatQuoteDraft = (input: {
   productName: string
   quantity: number
   suggestedUnitPrice: number
-  floorPrice: number
+  floorPrice: number | null
   marginPct: number
   pricePositioning: string
   shippingLeadDays: number
@@ -481,7 +615,9 @@ const formatQuoteDraft = (input: {
     `Quantity: ${input.quantity}`,
     `Suggested unit price: ${currency(input.suggestedUnitPrice, input.currency, input.locale)}`,
     typeof input.targetMarginFloorPct === "number"
-      ? `Commercial floor: ${currency(input.floorPrice, input.currency, input.locale)}`
+      ? input.floorPrice === null
+        ? `Commercial floor: unavailable (configured ${percentage(input.targetMarginFloorPct)} gross margin is not achievable with a finite selling price)`
+        : `Commercial floor: ${currency(input.floorPrice, input.currency, input.locale)}`
       : null,
     `Gross margin at suggested price: ${percentage(input.marginPct)}`,
     `Market position: ${input.pricePositioning}`,
@@ -490,11 +626,15 @@ const formatQuoteDraft = (input: {
     "",
     "Draft response:",
     `We can offer ${input.quantity} units of ${input.productName} at ${currency(input.suggestedUnitPrice, input.currency, input.locale)} per unit, with an estimated lead time of ${input.shippingLeadDays} days.`,
-    typeof input.targetMarginFloorPct === "number" && input.suggestedUnitPrice < input.floorPrice
-      ? `Warning: the proposed price is below the configured margin floor of ${percentage(input.targetMarginFloorPct)}.`
-      : typeof input.targetMarginFloorPct === "number"
-        ? `This quote remains above the configured margin floor of ${percentage(input.targetMarginFloorPct)}.`
-        : null,
+    typeof input.targetMarginFloorPct === "number" && input.floorPrice === null
+      ? `Warning: the configured margin floor of ${percentage(input.targetMarginFloorPct)} is impossible to satisfy with a finite selling price.`
+      : typeof input.targetMarginFloorPct === "number" &&
+          input.floorPrice !== null &&
+          input.suggestedUnitPrice < input.floorPrice
+        ? `Warning: the proposed price is below the configured margin floor of ${percentage(input.targetMarginFloorPct)}.`
+        : typeof input.targetMarginFloorPct === "number" && input.floorPrice !== null
+          ? `This quote remains above the configured margin floor of ${percentage(input.targetMarginFloorPct)}.`
+          : null,
     input.notes
       ? `Notes: ${input.notes}`
       : "Notes: Offer optional upsell, MOQ ladder, or faster-shipping surcharge if negotiation starts.",
@@ -615,9 +755,9 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       const shippingLeadDays = toNumber(params.shippingLeadDays, 7)
       const floorPrice =
         typeof pluginConfig.targetMarginFloorPct === "number"
-          ? unitCost * (1 + pluginConfig.targetMarginFloorPct / 100)
-          : 0
-      const marginPct = unitCost > 0 ? ((suggestedUnitPrice - unitCost) / unitCost) * 100 : 0
+          ? minimumPriceForGrossMargin(unitCost, pluginConfig.targetMarginFloorPct)
+          : null
+      const marginPct = suggestedUnitPrice > 0 ? grossMarginPct(suggestedUnitPrice, unitCost) : 0
       const pricePositioning =
         suggestedUnitPrice <= competitorUnitPrice
           ? "at or below market"
@@ -716,326 +856,179 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
   })
 
   api.registerTool({
-    name: "seller_restock_signal",
-    label: "Seller Restock Signal",
+    name: "seller_replenishment_decision",
+    label: "Seller Replenishment Decision",
     description:
-      "Estimate restock urgency for an exact SKU or product title search. Try the tool before asking for an exact SKU. If inventory or sales inputs are omitted, load them from a configured Shopify store. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. Only ask for supplierLeadDays or safetyStockDays if they are still missing after checking plugin config.",
-    parameters: SellerRestockSignalParamsSchema,
-    async execute(_id: string, params: SellerRestockSignalParams) {
+      "Return conservative replenishment guidance for one product using Shopify-backed inventory and recent sales. Use this for questions about whether to restock or reorder a product. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
+    parameters: SellerReplenishmentDecisionParamsSchema,
+    async execute(_id: string, params: SellerReplenishmentDecisionParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
-      const supplierLeadDays = resolvePositiveNumber(
-        optionalNumber(params.supplierLeadDays) ??
-          optionalNumber(
-            resolveOptionalConfiguredNumber(
-              configuredStore,
-              "supplierLeadDays",
-              pluginConfig.supplierLeadDays,
-            ),
-          ),
-        "supplierLeadDays",
-        'Ask the user for supplier lead time in days, or configure "supplierLeadDays" on the store or plugin config.',
-      )
-      const safetyStockDays = resolveNonNegativeNumber(
-        optionalNumber(params.safetyStockDays) ??
-          optionalNumber(
-            resolveOptionalConfiguredNumber(
-              configuredStore,
-              "safetyStockDays",
-              pluginConfig.safetyStockDays,
-            ),
-          ),
-        "safetyStockDays",
-        'Ask the user for safety stock in days, or configure "safetyStockDays" on the store or plugin config.',
-      )
+      if (!configuredStore) {
+        return needsInputResult({
+          userPrompt:
+            "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_replenishment_decision.",
+        })
+      }
+      if (configuredStore.platform !== "shopify") {
+        throw new Error(
+          `seller_replenishment_decision is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+        )
+      }
+
       const salesLookbackDays = resolveSalesLookbackDays(
         params.salesLookbackDays,
         configuredStore,
         pluginConfig,
       )
-      const hasManualInventory = typeof params.onHandUnits === "number"
-      const hasManualSales = typeof params.dailySalesUnits === "number"
-
-      if (supplierLeadDays.kind !== "ready") {
-        return textResult(supplierLeadDays.message)
-      }
-      if (safetyStockDays.kind !== "ready") {
-        return textResult(safetyStockDays.message)
-      }
-
-      if (hasManualInventory && hasManualSales) {
-        const onHandUnits = resolveNonNegativeNumber(
-          params.onHandUnits,
-          "onHandUnits",
-          "Ask the user for current on-hand inventory.",
-        )
-        const dailySalesUnits = resolveNonNegativeNumber(
-          params.dailySalesUnits,
-          "dailySalesUnits",
-          "Ask the user for average daily sales.",
-        )
-        if (onHandUnits.kind !== "ready") {
-          return textResult(onHandUnits.message)
-        }
-        if (dailySalesUnits.kind !== "ready") {
-          return textResult(dailySalesUnits.message)
-        }
-        return textResult(
-          formatRestockSignal(
-            evaluateRestockSignal({
-              sku: params.sku,
-              onHandUnits: onHandUnits.value,
-              dailySalesUnits: dailySalesUnits.value,
-              supplierLeadDays: supplierLeadDays.value,
-              safetyStockDays: safetyStockDays.value,
-              source: "manual",
-              retrievedAtIso: new Date().toISOString(),
-              locale: pluginConfig.locale,
-              storeName: "Manual input",
-              timezone: "UTC",
-              productName: params.sku,
-            }),
-          ),
-        )
+      const snapshot = await loadShopifyProductActionSnapshot(
+        configuredStore.store,
+        params.productRef,
+        salesLookbackDays,
+        pluginConfig.locale,
+        {
+          includePricing: false,
+        },
+      )
+      if (snapshot.kind !== "ready") {
+        return needsInputResult({
+          userPrompt: snapshot.message,
+        })
       }
 
-      if (hasManualInventory && !hasManualSales && !configuredStore) {
-        return textResult(
-          "Ask the user for average daily sales, or configure a Shopify store so sales can be loaded automatically.",
+      const configuredSupplierLeadDays =
+        params.supplierLeadDays ??
+        resolveOptionalConfiguredNumber(
+          configuredStore,
+          "supplierLeadDays",
+          pluginConfig.supplierLeadDays,
         )
+      const configuredSafetyStockDays =
+        params.safetyStockDays ??
+        resolveOptionalConfiguredNumber(
+          configuredStore,
+          "safetyStockDays",
+          pluginConfig.safetyStockDays,
+        )
+      const replenishmentInputs = resolveProductActionReplenishmentInputs({
+        supplierLeadDays: configuredSupplierLeadDays,
+        safetyStockDays: configuredSafetyStockDays,
+      })
+
+      if (replenishmentInputs.kind === "needs_input") {
+        return needsInputResult({
+          userPrompt: replenishmentInputs.userPrompt,
+          missingParameters: replenishmentInputs.missingParameters,
+          invalidParameters: replenishmentInputs.invalidParameters,
+        })
       }
 
-      if (!hasManualInventory && hasManualSales && !configuredStore) {
-        return textResult(
-          "Ask the user for current on-hand inventory, or configure a Shopify store so inventory can be loaded automatically.",
-        )
-      }
+      const evaluation = evaluateReplenishmentDecision({
+        snapshot: snapshot.value,
+        supplierLeadDays: replenishmentInputs.supplierLeadDays,
+        safetyStockDays: replenishmentInputs.safetyStockDays,
+      })
 
+      return textResult(formatReplenishmentDecision(evaluation))
+    },
+  })
+
+  api.registerTool({
+    name: "seller_discount_decision",
+    label: "Seller Discount Decision",
+    description:
+      "Return conservative discount guidance for one product using Shopify-backed inventory, recent sales, and margin data when available. Use this for questions about markdowns or price testing on a product. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
+    parameters: SellerDiscountDecisionParamsSchema,
+    async execute(_id: string, params: SellerDiscountDecisionParams) {
+      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
       if (!configuredStore) {
-        return textResult(
-          "Ask the user either to provide inventory and sales inputs manually, or to configure a store in plugins.entries.seller-assistant.config.",
-        )
+        return needsInputResult({
+          userPrompt:
+            "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_discount_decision.",
+        })
       }
-
       if (configuredStore.platform !== "shopify") {
         throw new Error(
-          `seller_restock_signal data loading is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+          `seller_discount_decision is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
         )
       }
 
-      const client = await createShopifyClient(configuredStore.store)
-      const snapshot =
-        hasManualSales && !hasManualInventory
-          ? await loadShopifyInventorySnapshotFromClient(
-              client,
-              configuredStore.store,
-              params.sku,
-              pluginConfig.locale,
-            )
-          : await loadShopifyRestockSnapshotFromClient(
-              client,
-              configuredStore.store,
-              params.sku,
-              salesLookbackDays,
-              pluginConfig.locale,
-            )
+      const salesLookbackDays = resolveSalesLookbackDays(
+        params.salesLookbackDays,
+        configuredStore,
+        pluginConfig,
+      )
+      const snapshot = await loadShopifyProductActionSnapshot(
+        configuredStore.store,
+        params.productRef,
+        salesLookbackDays,
+        pluginConfig.locale,
+      )
       if (snapshot.kind !== "ready") {
-        return textResult(snapshot.message)
+        return needsInputResult({
+          userPrompt: snapshot.message,
+        })
       }
 
-      const onHandUnits = hasManualInventory
-        ? resolveNonNegativeNumber(
-            params.onHandUnits,
-            "onHandUnits",
-            "Ask the user for current on-hand inventory.",
-          )
-        : ready(snapshot.value.onHandUnits)
-      const dailySalesUnits = hasManualSales
-        ? resolveNonNegativeNumber(
-            params.dailySalesUnits,
-            "dailySalesUnits",
-            "Ask the user for average daily sales.",
-          )
-        : "dailySalesUnits" in snapshot.value
-          ? ready(toNumber(snapshot.value.dailySalesUnits))
-          : 0
-      if (onHandUnits.kind !== "ready") {
-        return textResult(onHandUnits.message)
-      }
-      if (typeof dailySalesUnits !== "number" && dailySalesUnits.kind !== "ready") {
-        return textResult(dailySalesUnits.message)
-      }
+      const evaluation = evaluateDiscountDecision({
+        snapshot: snapshot.value,
+        marginFloorPct: pluginConfig.targetMarginFloorPct,
+      })
 
       return textResult(
-        formatRestockSignal(
-          evaluateRestockSignal({
-            ...snapshot.value,
-            onHandUnits: onHandUnits.value,
-            dailySalesUnits:
-              typeof dailySalesUnits === "number" ? dailySalesUnits : dailySalesUnits.value,
-            supplierLeadDays: supplierLeadDays.value,
-            safetyStockDays: safetyStockDays.value,
-            lookbackDays:
-              "lookbackDays" in snapshot.value
-                ? (optionalNumber(snapshot.value.lookbackDays) ?? undefined)
-                : undefined,
-          }),
-        ),
+        formatDiscountDecision(evaluation, {
+          locale: pluginConfig.locale,
+          fallbackCurrency: pluginConfig.currency,
+        }),
       )
     },
   })
 
   api.registerTool({
-    name: "seller_campaign_context",
-    label: "Seller Campaign Context",
+    name: "seller_clearance_decision",
+    label: "Seller Clearance Decision",
     description:
-      "Load campaign planning context for an exact SKU or product title search. Use this before drafting a final campaign recommendation. Prefer loading inventory cover and recent sales from a configured Shopify store. Ask the user for any required missing campaign inputs before giving the final plan. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
-    parameters: SellerCampaignPlanParamsSchema,
-    async execute(_id: string, params: SellerCampaignPlanParams) {
+      "Return conservative clearance guidance for one product using Shopify-backed inventory, recent sales, and margin data when available. Use this for questions about clearing aged inventory on a product. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
+    parameters: SellerClearanceDecisionParamsSchema,
+    async execute(_id: string, params: SellerClearanceDecisionParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
+      if (!configuredStore) {
+        return needsInputResult({
+          userPrompt:
+            "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_clearance_decision.",
+        })
+      }
+      if (configuredStore.platform !== "shopify") {
+        throw new Error(
+          `seller_clearance_decision is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
+        )
+      }
+
       const salesLookbackDays = resolveSalesLookbackDays(
         params.salesLookbackDays,
         configuredStore,
         pluginConfig,
       )
-      const hasManualMargin = typeof params.currentMarginPct === "number"
-      const hasManualInventoryDays = typeof params.inventoryDaysLeft === "number"
-
-      if (hasManualMargin && hasManualInventoryDays) {
-        const currentMarginPct = resolveNonNegativeNumber(
-          params.currentMarginPct,
-          "currentMarginPct",
-          "Ask the user for the current gross margin percentage.",
-        )
-        const inventoryDaysLeft = resolveNonNegativeNumber(
-          params.inventoryDaysLeft,
-          "inventoryDaysLeft",
-          "Ask the user for current inventory cover in days.",
-        )
-        if (currentMarginPct.kind !== "ready") {
-          return textResult(currentMarginPct.message)
-        }
-        if (inventoryDaysLeft.kind !== "ready") {
-          return textResult(inventoryDaysLeft.message)
-        }
-        return textResult(
-          formatCampaignContext({
-            objective: params.objective,
-            heroSku: params.heroSku,
-            currentMarginPct: currentMarginPct.value,
-            inventoryDaysLeft: inventoryDaysLeft.value,
-            productName: params.heroSku,
-            channel: params.channel,
-            source: "manual",
-            retrievedAtIso: new Date().toISOString(),
-            storeName: "Manual input",
-            timezone: "UTC",
-            constraint: params.constraint,
-            targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
-            currency: pluginConfig.currency,
-            locale: pluginConfig.locale,
-          }),
-        )
-      }
-
-      if (hasManualMargin && !hasManualInventoryDays && !configuredStore) {
-        return textResult(
-          "To continue the campaign plan, ask the user for current inventory cover in days, or use a configured Shopify store so it can be loaded automatically.",
-        )
-      }
-
-      if (!hasManualMargin && hasManualInventoryDays && !configuredStore) {
-        return textResult(
-          "To continue the campaign plan, ask the user for the current gross margin percentage, or use a configured Shopify store with product cost data so it can be calculated automatically.",
-        )
-      }
-
-      if (!configuredStore) {
-        return textResult(
-          "Ask the user either to provide margin and inventory inputs manually, or to configure a store in plugins.entries.seller-assistant.config.",
-        )
-      }
-
-      if (configuredStore.platform !== "shopify") {
-        throw new Error(
-          `seller_campaign_context data loading is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
-        )
-      }
-
-      const client = await createShopifyClient(configuredStore.store)
-      const snapshot =
-        hasManualInventoryDays && !hasManualMargin
-          ? await loadShopifyProductSnapshotFromClient(
-              client,
-              configuredStore.store,
-              params.heroSku,
-              pluginConfig.locale,
-            )
-          : await loadShopifyCampaignSnapshot(
-              configuredStore.store,
-              params.heroSku,
-              salesLookbackDays,
-              pluginConfig.locale,
-            )
+      const snapshot = await loadShopifyProductActionSnapshot(
+        configuredStore.store,
+        params.productRef,
+        salesLookbackDays,
+        pluginConfig.locale,
+      )
       if (snapshot.kind !== "ready") {
-        return textResult(snapshot.message)
+        return needsInputResult({
+          userPrompt: snapshot.message,
+        })
       }
-      const resolvedCurrentMarginPct = hasManualMargin
-        ? resolveNonNegativeNumber(
-            params.currentMarginPct,
-            "currentMarginPct",
-            "Ask the user for the current gross margin percentage.",
-          )
-        : ready(optionalNumber(snapshot.value.currentMarginPct))
-      const resolvedInventoryDaysLeft = hasManualInventoryDays
-        ? resolveNonNegativeNumber(
-            params.inventoryDaysLeft,
-            "inventoryDaysLeft",
-            "Ask the user for current inventory cover in days.",
-          )
-        : ready(
-            "inventoryDaysLeft" in snapshot.value
-              ? toNumber(snapshot.value.inventoryDaysLeft, 999)
-              : 999,
-          )
-      const lookbackDays =
-        "lookbackDays" in snapshot.value
-          ? (optionalNumber(snapshot.value.lookbackDays) ?? undefined)
-          : undefined
 
-      if (resolvedCurrentMarginPct.kind !== "ready") {
-        return textResult(resolvedCurrentMarginPct.message)
-      }
-      if (resolvedInventoryDaysLeft.kind !== "ready") {
-        return textResult(resolvedInventoryDaysLeft.message)
-      }
-      if (resolvedCurrentMarginPct.value === null) {
-        return textResult(
-          `Ask the user for the current gross margin % for "${params.heroSku}". If they do not know it, ask for unit cost and selling price so margin can be calculated.`,
-        )
-      }
+      const evaluation = evaluateClearanceDecision({
+        snapshot: snapshot.value,
+        marginFloorPct: pluginConfig.targetMarginFloorPct,
+      })
 
       return textResult(
-        formatCampaignContext({
-          objective: params.objective,
-          heroSku: params.heroSku,
-          currentMarginPct: resolvedCurrentMarginPct.value,
-          inventoryDaysLeft: resolvedInventoryDaysLeft.value,
-          productName: snapshot.value.productName,
-          channel: params.channel,
-          constraint: params.constraint,
-          source: snapshot.value.source,
-          retrievedAtIso: snapshot.value.retrievedAtIso,
-          storeName: snapshot.value.storeName,
-          timezone: snapshot.value.timezone,
-          lookbackDays,
-          currencyCode: "currencyCode" in snapshot.value ? snapshot.value.currencyCode : null,
-          averageUnitPrice:
-            "averageUnitPrice" in snapshot.value ? snapshot.value.averageUnitPrice : undefined,
-          averageUnitCost:
-            "averageUnitCost" in snapshot.value ? snapshot.value.averageUnitCost : undefined,
-          targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
-          currency: pluginConfig.currency,
+        formatClearanceDecision(evaluation, {
           locale: pluginConfig.locale,
+          fallbackCurrency: pluginConfig.currency,
         }),
       )
     },

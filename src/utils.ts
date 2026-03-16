@@ -42,6 +42,16 @@ export const toNumber = (value: unknown, fallback = 0) =>
 export const optionalNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : null
 
+/** Calculates gross margin as a percentage of selling price. */
+export const grossMarginPct = (unitPrice: number, unitCost: number) =>
+  unitPrice > 0 ? ((unitPrice - unitCost) / unitPrice) * 100 : 0
+
+/** Calculates the minimum selling price needed to preserve a gross-margin floor. */
+export const minimumPriceForGrossMargin = (unitCost: number, marginFloorPct: number) =>
+  Number.isFinite(unitCost) && Number.isFinite(marginFloorPct) && marginFloorPct < 100
+    ? Math.max(unitCost, unitCost / (1 - marginFloorPct / 100))
+    : null
+
 /** Normalizes SKUs and titles for exact or fuzzy matching. */
 export const normalizeSku = (value: string) =>
   value
@@ -71,6 +81,34 @@ export const sum = (values: number[]) => values.reduce((total, value) => total +
 export const textResult = (text: string): AgentToolResult<unknown> => ({
   content: [{ type: "text", text }],
   details: null,
+})
+
+export type NeedsInputToolDetails = {
+  status: "needs_input"
+  userPrompt: string
+  missingParameters: string[]
+  invalidParameters: Array<{
+    name: string
+    issue: string
+  }>
+}
+
+/** Wraps a missing-input response as text plus structured details for the agent. */
+export const needsInputResult = (input: {
+  userPrompt: string
+  missingParameters?: string[]
+  invalidParameters?: Array<{
+    name: string
+    issue: string
+  }>
+}): AgentToolResult<NeedsInputToolDetails> => ({
+  content: [{ type: "text", text: input.userPrompt }],
+  details: {
+    status: "needs_input",
+    userPrompt: input.userPrompt,
+    missingParameters: input.missingParameters ?? [],
+    invalidParameters: input.invalidParameters ?? [],
+  },
 })
 
 export type FlowResolution<T> =

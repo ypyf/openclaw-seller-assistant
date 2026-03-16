@@ -5,15 +5,16 @@
 > [!WARNING]
 > This project is evolving quickly. Many features are still incomplete, and tool behavior, configuration, and public interfaces may change without preserving backward compatibility between releases.
 
-It packages seven seller tools:
+It packages eight seller tools:
 
 - `seller_store_overview`: look up store-level revenue, order volume, units sold, and optional inventory totals for a time window
 - `seller_store_sales_summary`: return a fixed plain-text multi-window store sales summary
 - `seller_inventory_query`: look up current on-hand inventory for an exact SKU, full product title, or title keywords
 - `seller_sales_query`: query recent sales for an exact SKU, full product title, or title keywords
 - `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
-- `seller_restock_signal`: estimate replenishment urgency for an exact SKU, full product title, or title keywords
-- `seller_campaign_context`: load campaign planning context for an exact SKU, full product title, or title keywords, using Shopify inventory and recent sales when available
+- `seller_replenishment_decision`: decide whether to restock or reorder a product using Shopify inventory and recent sales
+- `seller_discount_decision`: decide whether a product is a candidate for markdown or discount testing
+- `seller_clearance_decision`: decide whether a product is a candidate for clearance
 
 ## Install
 
@@ -59,8 +60,9 @@ For restricted configs, add the plugin id under `plugins.allow` and list the too
       "seller_inventory_query",
       "seller_sales_query",
       "seller_quote_builder",
-      "seller_restock_signal",
-      "seller_campaign_context"
+      "seller_replenishment_decision",
+      "seller_discount_decision",
+      "seller_clearance_decision"
     ]
   }
 }
@@ -124,8 +126,8 @@ In that structure:
 - `currency` is a fallback display currency for outputs that do not have an explicit business currency from source data. It does not override Shopify's actual store or order currency.
 - `locale` controls date, number, and currency formatting for tool output
 - store-level `supplierLeadDays`, `safetyStockDays`, and `salesLookbackDays` override the plugin-level defaults for that store
-- plugin-level `supplierLeadDays` and `safetyStockDays` remain shared fallbacks for restock checks
-- plugin-level `salesLookbackDays` remains the shared fallback sales window for Shopify-backed sales, restock, and campaign context lookups
+- plugin-level `supplierLeadDays` and `safetyStockDays` remain shared fallbacks for replenishment decisions
+- plugin-level `salesLookbackDays` remains the shared fallback sales window for Shopify-backed sales and product decision tools
 
 Built-in defaults when a config value is omitted:
 
@@ -178,7 +180,7 @@ To use `seller_store_overview` with Shopify, grant the app at least these Admin 
 
 `seller_inventory_query` only needs `read_products`.
 
-`seller_store_overview`, `seller_store_sales_summary`, `seller_sales_query`, `seller_restock_signal`, and `seller_campaign_context` use Shopify order data, so they need both `read_products` and `read_orders`.
+`seller_store_overview`, `seller_store_sales_summary`, `seller_sales_query`, `seller_replenishment_decision`, `seller_discount_decision`, and `seller_clearance_decision` use Shopify order data, so they need both `read_products` and `read_orders`.
 
 Current limitations of the Shopify store overview:
 
@@ -196,8 +198,10 @@ After the plugin is loaded, ask the agent in natural language:
 - "Check store health for my default store."
 - "Check inventory for short sleeve in my default store."
 - "Draft a quote for Acme for 500 wireless mice. Unit cost is 8, target price is 12, competitor price is 11.5, and lead time is 10 days."
-- "Check whether SKU WM-01 needs restocking for my default store."
-- "Create a campaign plan to clear inventory for SKU WM-01 in store shopify-us. Use a 21 day sales lookback."
+- "Should I restock, discount, or clear SKU WM-01 in my default store?"
+- "Should I restock SKU WM-01 in my default store?"
+- "Is this SKU worth replenishing or clearing?"
+- "Should I try discounting Wireless Mouse in store shopify-us?"
 
 More examples are available in [Usage Examples](./docs/usage-examples.md).
 
@@ -210,8 +214,11 @@ More examples are available in [Usage Examples](./docs/usage-examples.md).
 - `seller_store_sales_summary` is the canonical tool for fixed plain-text multi-window store sales summaries.
 - Store sales summary routing is skill-led: the `store-sales-summary` skill should call `seller_store_sales_summary` and keep the tool output as the final answer shape.
 - Sales query is a product-level factual capability: use `seller_sales_query` when the user asks how much a product sold recently.
+- Product decisions are skill-led: the `product-decision` skill should call `seller_replenishment_decision`, `seller_discount_decision`, and/or `seller_clearance_decision` depending on the user's ask, and aggregate outputs for multi-part questions.
+- `seller_replenishment_decision`, `seller_discount_decision`, and `seller_clearance_decision` support inventory-and-pricing decisions only. They do not answer paid-promotion or ad-investment questions.
+- Discount and clearance pricing guidance require margin data. When cost access is unavailable, those tools should degrade to unavailable margin guidance rather than fail.
 - Store analysis is skill-led: the `store-analysis` skill should use `seller_store_overview` facts before giving any diagnosis or next-step advice.
-- Campaign planning is skill-led: `seller_campaign_context` loads planning context, and the campaign-planning skill should ask for any missing required inputs before giving the final recommendation.
+- Campaign planning remains skill-led and should stay focused on promotion strategy, not replenishment / discount / clearance ownership.
 
 ## License
 

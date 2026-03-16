@@ -33,16 +33,23 @@ These examples show representative natural-language prompts for each seller capa
 
 - "Draft a quote for Acme for 500 wireless mice. Unit cost is 8, target price is 12, competitor price is 11.5, and lead time is 10 days."
 
-## Restock Signal
+## Replenishment Decision
 
-- "Check whether SKU WM-01 needs restocking for my default store."
-- "Check whether Wireless Mouse needs restocking for my default store."
-- "Check whether SKU WM-01 needs restocking for store shopify-us. Use a 21 day sales lookback."
+- "Should I restock SKU WM-01 in my default store?"
+- "Do I need to reorder Wireless Mouse in store shopify-us?"
 
-## Campaign Planning
+## Discount Decision
 
-- "Create a campaign plan to clear inventory for SKU WM-01 in my default store."
-- "Create a campaign plan to clear inventory for Wireless Mouse in my default store."
-- "Create a campaign plan to clear inventory for SKU WM-01 in store shopify-us. Use a 21 day sales lookback."
-- "Create a campaign plan to clear inventory for SKU WM-01 on Meta ads in my default store."
-- "Create a campaign plan to clear inventory for SKU WM-01 in my default store. Current gross margin is 28%."
+- "Should I try discounting Wireless Mouse in store shopify-us?"
+- "Is SKU WM-01 a good markdown candidate in my default store?"
+
+## Clearance Decision
+
+- "Should I clear SKU WM-01 in my default store?"
+- "Is Wireless Mouse a clearance candidate in store shopify-us?"
+
+## Combined Product Decision
+
+- "Should I restock, discount, or clear SKU WM-01 in my default store?"
+- "Is this SKU worth replenishing or clearing?"
+- "Should I restock or clear SKU WM-01 in store shopify-us? Use a 21 day sales lookback."

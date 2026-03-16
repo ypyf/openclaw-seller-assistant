@@ -4,9 +4,11 @@ import {
   SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY,
   SHOPIFY_PRODUCTS_BY_TITLE_QUERY,
   SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY,
+  SHOPIFY_PRODUCT_VARIANTS_PAGE_WITH_COST_QUERY,
   SHOPIFY_SHOP_QUERY,
   SHOPIFY_VARIANTS_PAGE_QUERY,
   SHOPIFY_VARIANT_BY_SKU_QUERY,
+  SHOPIFY_VARIANT_BY_SKU_WITH_COST_QUERY,
 } from "../shopify/queries.js"
 import type {
   ShopifyGraphQLClient,
@@ -32,6 +34,8 @@ import { DEFAULT_PLUGIN_CONFIG, type ShopifyStoreConfig } from "../config.js"
 import { createShopifyClient, formatShopifyErrors, getDateRange } from "../shopify/client.js"
 import {
   type FlowResolution,
+  grossMarginPct,
+  minimumPriceForGrossMargin,
   needsInput,
   normalizeSku,
   optionalNumber,
@@ -46,6 +50,11 @@ import {
 const SHOPIFY_TITLE_SEARCH_LIMIT = 50
 const SHOPIFY_MATCH_CHOICE_LIMIT = 5
 const SHOPIFY_VARIANT_FETCH_BATCH_SIZE = 5
+const WEAK_DEMAND_DAILY_SALES_THRESHOLD = 0.3
+const HEALTHY_DEMAND_DAILY_SALES_THRESHOLD = 1
+const INSUFFICIENT_DATA_MIN_LOOKBACK_DAYS = 14
+const INSUFFICIENT_DATA_MIN_UNITS_SOLD = 3
+const VERY_LOW_LOOKBACK_UNITS_FACTOR = 0.1
 
 export type ShopifyStoreOverviewSnapshot = {
   source: "shopify"
@@ -126,6 +135,61 @@ export type ShopifyCampaignSnapshot = ShopifyRestockSnapshot & {
   averageUnitPrice: number
   averageUnitCost: number | null
 }
+
+export type ProductDecisionDemandStatus = "healthy" | "moderate" | "weak" | "insufficient_data"
+
+export type ShopifyProductActionSnapshot = ShopifyRestockSnapshot & {
+  currencyCode: string | null
+  inventoryDaysLeft: number
+  averageUnitPrice: number
+  averageUnitCost: number | null
+  currentMarginPct: number | null
+}
+
+type ProductActionDecisionBase = {
+  storeName: string
+  timezone: string
+  currencyCode: string | null
+  productName: string
+  sku: string
+  lookbackDays: number
+  dailySalesUnits: number
+  demandStatus: ProductDecisionDemandStatus
+  unitsSold: number
+  onHandUnits: number
+  inventoryDaysLeft: number
+  stockoutDetected: boolean
+  hasInsufficientDemandData: boolean
+}
+
+type ProductActionPricingEvaluation = {
+  averageUnitPrice: number
+  averageUnitCost: number | null
+  currentMarginPct: number | null
+  marginFloorPct: number | null
+  hasValidMarginFloor: boolean
+  minimumAllowedUnitPrice: number | null
+  maximumDiscountPctFromAveragePrice: number | null
+}
+
+export type ReplenishmentDecisionEvaluation = ProductActionDecisionBase & {
+  targetStockUnits: number
+  recommendedReorderUnits: number
+  replenishmentDecision: "restock_now" | "restock_soon" | "hold_inventory" | "do_not_restock"
+  replenishmentReason: string
+}
+
+export type DiscountDecisionEvaluation = ProductActionDecisionBase &
+  ProductActionPricingEvaluation & {
+    discountDecision: "hold_price" | "test_discount" | "discount_blocked"
+    discountReason: string
+  }
+
+export type ClearanceDecisionEvaluation = ProductActionDecisionBase &
+  ProductActionPricingEvaluation & {
+    clearanceDecision: "not_clearance_candidate" | "review_for_clearance" | "clear_inventory"
+    clearanceReason: string
+  }
 
 export type RestockSignal = {
   sku: string
@@ -613,6 +677,51 @@ const fetchAllProductVariants = async (
   }
 }
 
+const fetchAllProductVariantsWithCost = async (
+  client: ShopifyGraphQLClient,
+  product: ShopifyProductByTitle,
+): Promise<ShopifyProductWithVariants> => {
+  const productId = product?.id?.trim()
+  if (!productId) {
+    return {
+      ...product,
+      variants: { nodes: [] },
+    }
+  }
+
+  const variants: ShopifyProductVariantNode[] = []
+  let hasNextPage = true
+  let after: string | null = null
+
+  while (hasNextPage) {
+    const result: ShopifyGraphQLResponse<ShopifyProductVariantsPage> =
+      await client.request<ShopifyProductVariantsPage>(
+        SHOPIFY_PRODUCT_VARIANTS_PAGE_WITH_COST_QUERY,
+        {
+          variables: {
+            productId,
+            after,
+          },
+        },
+      )
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page: NonNullable<ShopifyProductVariantsPage["product"]>["variants"] | undefined =
+      result.data?.product?.variants
+    variants.push(...toArray<ShopifyProductVariantNode>(page?.nodes))
+    hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+    after = page?.pageInfo?.endCursor ?? null
+  }
+
+  return {
+    ...product,
+    variants: { nodes: variants },
+  }
+}
+
 const fetchAllSkuCandidates = async (client: ShopifyGraphQLClient, requestedValue: string) => {
   const skuQuery = `sku:${JSON.stringify(requestedValue)}`
   const skuVariants: NonNullable<
@@ -624,6 +733,44 @@ const fetchAllSkuCandidates = async (client: ShopifyGraphQLClient, requestedValu
   while (hasNextPage) {
     const result: ShopifyGraphQLResponse<ShopifyVariantLookupPage> =
       await client.request<ShopifyVariantLookupPage>(SHOPIFY_VARIANT_BY_SKU_QUERY, {
+        variables: {
+          skuQuery,
+          after,
+        },
+      })
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page: ShopifyVariantLookupPage["productVariants"] | undefined =
+      result.data?.productVariants
+    skuVariants.push(
+      ...toArray<
+        NonNullable<NonNullable<ShopifyVariantLookupPage["productVariants"]>["nodes"]>[number]
+      >(page?.nodes),
+    )
+    hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+    after = page?.pageInfo?.endCursor ?? null
+  }
+
+  return skuVariants
+}
+
+const fetchAllSkuCandidatesWithCost = async (
+  client: ShopifyGraphQLClient,
+  requestedValue: string,
+) => {
+  const skuQuery = `sku:${JSON.stringify(requestedValue)}`
+  const skuVariants: NonNullable<
+    NonNullable<ShopifyVariantLookupPage["productVariants"]>["nodes"]
+  > = []
+  let hasNextPage = true
+  let after: string | null = null
+
+  while (hasNextPage) {
+    const result: ShopifyGraphQLResponse<ShopifyVariantLookupPage> =
+      await client.request<ShopifyVariantLookupPage>(SHOPIFY_VARIANT_BY_SKU_WITH_COST_QUERY, {
         variables: {
           skuQuery,
           after,
@@ -930,7 +1077,7 @@ const summarizeShopifyVariantPricing = (variants: ShopifyResolvedVariant[]) => {
     hasCompleteCostCoverage && costAmounts.length > 0 ? sum(costAmounts) / costAmounts.length : null
   const currentMarginPct =
     averageUnitPrice > 0 && averageUnitCost !== null
-      ? ((averageUnitPrice - averageUnitCost) / averageUnitPrice) * 100
+      ? grossMarginPct(averageUnitPrice, averageUnitCost)
       : null
 
   return {
@@ -938,6 +1085,46 @@ const summarizeShopifyVariantPricing = (variants: ShopifyResolvedVariant[]) => {
     averageUnitCost,
     currentMarginPct,
   }
+}
+
+const isShopifyProductCostAccessError = (error: unknown) =>
+  error instanceof Error &&
+  /(unitcost|inventoryitem|product costs|view product costs)/i.test(error.message)
+
+const tryLoadShopifyVariantCosts = async (
+  client: ShopifyGraphQLClient,
+  selection: ShopifyVariantSelection,
+) => {
+  const selectedVariantKeys = new Set(selection.variants.map(getVariantKey).filter(Boolean))
+  const selectedProductId = selection.variants[0]?.product?.id?.trim()
+  const hasSingleResolvedProduct =
+    typeof selectedProductId === "string" &&
+    selectedProductId.length > 0 &&
+    selection.variants.every(variant => variant?.product?.id?.trim() === selectedProductId)
+
+  if (hasSingleResolvedProduct) {
+    const productWithVariants = await fetchAllProductVariantsWithCost(client, {
+      id: selectedProductId,
+      title: selection.variants[0]?.product?.title ?? null,
+    })
+    const hydratedVariants = toArray<ShopifyProductVariantNode>(
+      productWithVariants.variants?.nodes,
+    ).filter(variant => selectedVariantKeys.has(getVariantKey(variant)))
+
+    return hydratedVariants.length > 0 ? hydratedVariants : selection.variants
+  }
+
+  const hydratedVariants = await runInBatches(
+    selection.resolvedSkus,
+    SHOPIFY_VARIANT_FETCH_BATCH_SIZE,
+    async sku => fetchAllSkuCandidatesWithCost(client, sku),
+  )
+
+  const flattenedVariants = hydratedVariants
+    .flat()
+    .filter(variant => selectedVariantKeys.has(getVariantKey(variant)))
+
+  return flattenedVariants.length > 0 ? flattenedVariants : selection.variants
 }
 
 /** Loads a Shopify store overview with sales and optional inventory totals for a time window. */
@@ -1219,12 +1406,24 @@ export const loadShopifyProductSnapshotFromClient = async (
   store: ShopifyStoreConfig,
   productRef: string,
   locale: string,
+  options?: {
+    includeCosts?: boolean
+  },
 ): Promise<FlowResolution<ShopifyProductSnapshot>> => {
   const selection = await resolveShopifyVariantSelection(client, productRef)
   if (selection.kind !== "ready") {
     return selection
   }
-  const variants = selection.value.variants
+  let variants = selection.value.variants
+  if (options?.includeCosts !== false) {
+    try {
+      variants = await tryLoadShopifyVariantCosts(client, selection.value)
+    } catch (error) {
+      if (!isShopifyProductCostAccessError(error)) {
+        throw error
+      }
+    }
+  }
   const firstVariant = variants[0]
   const shop = await fetchShopifyShopMetadata(client)
   const retrievedAtIso = new Date().toISOString()
@@ -1299,6 +1498,343 @@ export const loadShopifyCampaignSnapshot = async (
     averageUnitPrice: productSnapshot.value.averageUnitPrice,
     averageUnitCost: productSnapshot.value.averageUnitCost,
   })
+}
+
+/** Loads product decision inputs from Shopify, including sales, inventory cover, and pricing. */
+export const loadShopifyProductActionSnapshot = async (
+  store: ShopifyStoreConfig,
+  productRef: string,
+  lookbackDays: number,
+  locale: string,
+  options?: {
+    includePricing?: boolean
+  },
+): Promise<FlowResolution<ShopifyProductActionSnapshot>> => {
+  const client = await createShopifyClient(store)
+  const restockSnapshot = await loadShopifyRestockSnapshotFromClient(
+    client,
+    store,
+    productRef,
+    lookbackDays,
+    locale,
+  )
+  if (restockSnapshot.kind !== "ready") {
+    return restockSnapshot
+  }
+
+  const inventoryDaysLeft =
+    restockSnapshot.value.dailySalesUnits > 0
+      ? restockSnapshot.value.onHandUnits / restockSnapshot.value.dailySalesUnits
+      : Number.POSITIVE_INFINITY
+
+  if (options?.includePricing === false) {
+    return ready({
+      ...restockSnapshot.value,
+      currencyCode: null,
+      inventoryDaysLeft,
+      averageUnitPrice: 0,
+      averageUnitCost: null,
+      currentMarginPct: null,
+    })
+  }
+
+  const productSnapshot = await loadShopifyProductSnapshotFromClient(
+    client,
+    store,
+    restockSnapshot.value.sku,
+    locale,
+  )
+  if (productSnapshot.kind !== "ready") {
+    return productSnapshot
+  }
+
+  return ready({
+    ...restockSnapshot.value,
+    currencyCode: productSnapshot.value.currencyCode,
+    inventoryDaysLeft,
+    averageUnitPrice: productSnapshot.value.averageUnitPrice,
+    averageUnitCost: productSnapshot.value.averageUnitCost,
+    currentMarginPct: productSnapshot.value.currentMarginPct,
+  })
+}
+
+const classifyDemandStatus = (input: {
+  dailySalesUnits: number
+  lookbackDays: number
+  unitsSold: number
+  stockoutLikelyAffectedDemand: boolean
+}) => {
+  const hasInsufficientDemandData =
+    input.lookbackDays < INSUFFICIENT_DATA_MIN_LOOKBACK_DAYS ||
+    input.stockoutLikelyAffectedDemand ||
+    (input.unitsSold > 0 && input.unitsSold < INSUFFICIENT_DATA_MIN_UNITS_SOLD)
+
+  if (hasInsufficientDemandData) {
+    return "insufficient_data"
+  }
+  if (input.dailySalesUnits >= HEALTHY_DEMAND_DAILY_SALES_THRESHOLD) {
+    return "healthy"
+  }
+  if (input.dailySalesUnits < WEAK_DEMAND_DAILY_SALES_THRESHOLD) {
+    return "weak"
+  }
+  return "moderate"
+}
+
+const roundDecisionUnits = (value: number) => Math.max(Math.ceil(value), 0)
+
+const buildProductActionDecisionBase = (input: {
+  snapshot: ShopifyProductActionSnapshot
+}): ProductActionDecisionBase => {
+  const stockoutDetected = input.snapshot.onHandUnits <= 0
+  const stockoutLikelyAffectedDemand =
+    stockoutDetected &&
+    input.snapshot.unitsSold > 0 &&
+    input.snapshot.dailySalesUnits < HEALTHY_DEMAND_DAILY_SALES_THRESHOLD
+  const demandStatus: ProductDecisionDemandStatus = classifyDemandStatus({
+    dailySalesUnits: input.snapshot.dailySalesUnits,
+    lookbackDays: input.snapshot.lookbackDays,
+    unitsSold: input.snapshot.unitsSold,
+    stockoutLikelyAffectedDemand,
+  })
+
+  return {
+    storeName: input.snapshot.storeName,
+    timezone: input.snapshot.timezone,
+    currencyCode: input.snapshot.currencyCode,
+    productName: input.snapshot.productName,
+    sku: input.snapshot.sku,
+    lookbackDays: input.snapshot.lookbackDays,
+    dailySalesUnits: input.snapshot.dailySalesUnits,
+    demandStatus,
+    unitsSold: input.snapshot.unitsSold,
+    onHandUnits: input.snapshot.onHandUnits,
+    inventoryDaysLeft: input.snapshot.inventoryDaysLeft,
+    stockoutDetected,
+    hasInsufficientDemandData: demandStatus === "insufficient_data",
+  }
+}
+
+const buildProductActionPricingEvaluation = (input: {
+  snapshot: ShopifyProductActionSnapshot
+  marginFloorPct?: number
+}) => {
+  const marginFloorPct = optionalNumber(input.marginFloorPct)
+  const currentMarginPct = input.snapshot.currentMarginPct
+  const hasMarginData = currentMarginPct !== null
+  const hasValidMarginFloor = marginFloorPct === null || marginFloorPct < 100
+  const marginAtOrBelowFloor =
+    currentMarginPct !== null && marginFloorPct !== null && hasValidMarginFloor
+      ? currentMarginPct <= marginFloorPct
+      : false
+  const veryLowUnitsSoldThreshold = Math.max(
+    1,
+    input.snapshot.lookbackDays * VERY_LOW_LOOKBACK_UNITS_FACTOR,
+  )
+  const minimumAllowedUnitPrice =
+    input.snapshot.averageUnitCost !== null
+      ? marginFloorPct !== null && hasValidMarginFloor
+        ? minimumPriceForGrossMargin(input.snapshot.averageUnitCost, marginFloorPct)
+        : marginFloorPct === null
+          ? input.snapshot.averageUnitCost
+          : null
+      : null
+  const maximumDiscountPctFromAveragePrice =
+    minimumAllowedUnitPrice !== null && input.snapshot.averageUnitPrice > 0
+      ? Math.max(
+          ((input.snapshot.averageUnitPrice - minimumAllowedUnitPrice) /
+            input.snapshot.averageUnitPrice) *
+            100,
+          0,
+        )
+      : null
+
+  return {
+    averageUnitPrice: input.snapshot.averageUnitPrice,
+    averageUnitCost: input.snapshot.averageUnitCost,
+    currentMarginPct,
+    marginFloorPct,
+    hasValidMarginFloor,
+    minimumAllowedUnitPrice,
+    maximumDiscountPctFromAveragePrice,
+    hasMarginData,
+    marginAtOrBelowFloor,
+    veryLowUnitsSoldThreshold,
+  }
+}
+
+/** Evaluates conservative replenishment actions for one product. */
+export const evaluateReplenishmentDecision = (input: {
+  snapshot: ShopifyProductActionSnapshot
+  supplierLeadDays: number
+  safetyStockDays: number
+}): ReplenishmentDecisionEvaluation => {
+  const base = buildProductActionDecisionBase({
+    snapshot: input.snapshot,
+  })
+  const targetStockUnits = roundDecisionUnits(
+    input.snapshot.dailySalesUnits * (input.supplierLeadDays + input.safetyStockDays),
+  )
+  const recommendedReorderUnits = roundDecisionUnits(
+    Math.max(targetStockUnits - input.snapshot.onHandUnits, 0),
+  )
+
+  let replenishmentDecision: ReplenishmentDecisionEvaluation["replenishmentDecision"]
+  let replenishmentReason: string
+
+  if (input.snapshot.unitsSold === 0) {
+    replenishmentDecision = "do_not_restock"
+    replenishmentReason = `do_not_restock because no units sold over the last ${input.snapshot.lookbackDays} days.`
+  } else if (
+    Number.isFinite(input.snapshot.inventoryDaysLeft) &&
+    input.snapshot.inventoryDaysLeft >= 180 &&
+    base.demandStatus === "weak"
+  ) {
+    replenishmentDecision = "do_not_restock"
+    replenishmentReason = `do_not_restock because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days and recent demand is weak.`
+  } else if (input.snapshot.inventoryDaysLeft <= input.supplierLeadDays) {
+    replenishmentDecision = "restock_now"
+    replenishmentReason = `restock_now because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, at or below the ${input.supplierLeadDays}-day supplier lead time.`
+  } else if (input.snapshot.inventoryDaysLeft <= input.supplierLeadDays + input.safetyStockDays) {
+    replenishmentDecision = "restock_soon"
+    replenishmentReason = `restock_soon because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, inside the lead-time-plus-safety-stock buffer.`
+  } else {
+    replenishmentDecision = "hold_inventory"
+    replenishmentReason = base.hasInsufficientDemandData
+      ? `hold_inventory because recent demand is non-zero, inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, and the demand data is not reliable enough for a stronger replenishment move.`
+      : `hold_inventory because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days and recent demand is still active.`
+  }
+
+  return {
+    ...base,
+    targetStockUnits,
+    recommendedReorderUnits,
+    replenishmentDecision,
+    replenishmentReason,
+  }
+}
+
+/** Evaluates conservative discount actions for one product. */
+export const evaluateDiscountDecision = (input: {
+  snapshot: ShopifyProductActionSnapshot
+  marginFloorPct?: number
+}): DiscountDecisionEvaluation => {
+  const base = buildProductActionDecisionBase({
+    snapshot: input.snapshot,
+  })
+  const pricing = buildProductActionPricingEvaluation(input)
+
+  let discountDecision: DiscountDecisionEvaluation["discountDecision"]
+  let discountReason: string
+
+  if (input.snapshot.inventoryDaysLeft < 60) {
+    discountDecision = "hold_price"
+    discountReason = `hold_price because inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days.`
+  } else if (base.demandStatus === "healthy") {
+    discountDecision = "hold_price"
+    discountReason = "hold_price because demand is healthy enough that discounting is not needed."
+  } else if (base.demandStatus === "insufficient_data") {
+    discountDecision = "hold_price"
+    discountReason =
+      "hold_price because recent demand data is insufficient, so discount testing would be premature."
+  } else if (input.snapshot.inventoryDaysLeft >= 180) {
+    discountDecision = "hold_price"
+    discountReason =
+      "hold_price because this SKU is better handled as a clearance review than a standard discount test."
+  } else if (base.demandStatus === "weak") {
+    if (!pricing.hasValidMarginFloor) {
+      discountDecision = "discount_blocked"
+      discountReason = `discount_blocked because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy with a finite selling price.`
+    } else if (!pricing.hasMarginData) {
+      discountDecision = "discount_blocked"
+      discountReason = "discount_blocked because current margin is unavailable."
+    } else if ((pricing.currentMarginPct ?? 0) <= 0) {
+      discountDecision = "discount_blocked"
+      discountReason =
+        "discount_blocked because the current selling price is already at or below unit cost."
+    } else if (pricing.marginAtOrBelowFloor) {
+      discountDecision = "discount_blocked"
+      discountReason = `discount_blocked because current margin is at or below the configured ${pricing.marginFloorPct?.toFixed(1)}% floor.`
+    } else {
+      discountDecision = "test_discount"
+      discountReason =
+        pricing.marginFloorPct !== null
+          ? `test_discount because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, demand is weak, and margin remains above the configured floor.`
+          : `test_discount because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, demand is weak, and margin data is available for a controlled discount test.`
+    }
+  } else {
+    discountDecision = "hold_price"
+    discountReason = "hold_price because demand is not weak enough to justify discounting."
+  }
+
+  return {
+    ...base,
+    ...pricing,
+    discountDecision,
+    discountReason,
+  }
+}
+
+/** Evaluates conservative clearance actions for one product. */
+export const evaluateClearanceDecision = (input: {
+  snapshot: ShopifyProductActionSnapshot
+  marginFloorPct?: number
+}): ClearanceDecisionEvaluation => {
+  const base = buildProductActionDecisionBase({
+    snapshot: input.snapshot,
+  })
+  const pricing = buildProductActionPricingEvaluation(input)
+
+  let clearanceDecision: ClearanceDecisionEvaluation["clearanceDecision"]
+  let clearanceReason: string
+
+  if (input.snapshot.onHandUnits <= 0) {
+    clearanceDecision = "not_clearance_candidate"
+    clearanceReason = "not_clearance_candidate because there is no on-hand inventory left to clear."
+  } else if (input.snapshot.inventoryDaysLeft < 120) {
+    clearanceDecision = "not_clearance_candidate"
+    clearanceReason = `not_clearance_candidate because inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days.`
+  } else if (base.demandStatus === "healthy") {
+    clearanceDecision = "not_clearance_candidate"
+    clearanceReason = "not_clearance_candidate because demand remains healthy."
+  } else if (
+    input.snapshot.inventoryDaysLeft >= 180 &&
+    base.demandStatus === "weak" &&
+    input.snapshot.unitsSold <= pricing.veryLowUnitsSoldThreshold
+  ) {
+    clearanceDecision = "clear_inventory"
+    clearanceReason = !pricing.hasValidMarginFloor
+      ? `clear_inventory because inventory cover is very high and recent sales are minimal, but clearance pricing guidance is unavailable because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy.`
+      : !pricing.hasMarginData
+        ? "clear_inventory because inventory cover is very high and recent sales are minimal, but pricing guidance is unavailable because margin data is missing."
+        : pricing.marginAtOrBelowFloor
+          ? `clear_inventory because inventory cover is very high and recent sales are minimal, but clearance pricing should stay above the configured ${pricing.marginFloorPct?.toFixed(1)}% margin floor.`
+          : "clear_inventory because inventory cover is very high and recent sales are minimal."
+  } else if (base.demandStatus === "weak" || base.demandStatus === "insufficient_data") {
+    clearanceDecision = "review_for_clearance"
+    const clearanceBaseReason =
+      base.demandStatus === "insufficient_data"
+        ? "review_for_clearance because inventory is aging, but recent demand data is not reliable enough for an immediate clearance decision."
+        : `review_for_clearance because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days and demand is weak.`
+    clearanceReason = !pricing.hasValidMarginFloor
+      ? `${clearanceBaseReason} Clearance pricing guidance is unavailable because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy.`
+      : !pricing.hasMarginData
+        ? `${clearanceBaseReason} Clearance pricing guidance is unavailable because margin data is missing.`
+        : pricing.marginAtOrBelowFloor
+          ? `${clearanceBaseReason} Clearance pricing should stay above the configured ${pricing.marginFloorPct?.toFixed(1)}% margin floor.`
+          : clearanceBaseReason
+  } else {
+    clearanceDecision = "not_clearance_candidate"
+    clearanceReason =
+      "not_clearance_candidate because demand is not weak enough to justify clearance."
+  }
+
+  return {
+    ...base,
+    ...pricing,
+    clearanceReason,
+    clearanceDecision,
+  }
 }
 
 /** Computes reorder urgency and action guidance from inventory and demand inputs. */

@@ -20,7 +20,8 @@
       },
       "targetMarginFloorPct": {
         "type": "number",
-        "description": "Optional configured margin floor percentage used for quote guardrails and campaign margin buffer calculations."
+        "exclusiveMaximum": 100,
+        "description": "Optional configured gross-margin floor percentage used for quote guardrails and discount / clearance decision checks. Values must stay below 100."
       },
       "lowInventoryDays": {
         "type": "number",
@@ -29,15 +30,15 @@
       },
       "supplierLeadDays": {
         "type": "number",
-        "description": "Shared supplier lead time in days used by restock checks when the user does not provide one."
+        "description": "Shared supplier lead time in days used by replenishment decisions when the user does not provide one."
       },
       "safetyStockDays": {
         "type": "number",
-        "description": "Shared safety stock buffer in days used by restock checks when the user does not provide one."
+        "description": "Shared safety stock buffer in days used by replenishment decisions when the user does not provide one."
       },
       "salesLookbackDays": {
         "type": "number",
-        "description": "Shared lookback window in days used to estimate average daily sales for Shopify-backed restock checks.",
+        "description": "Shared lookback window in days used to estimate average daily sales for Shopify-backed replenishment, discount, and clearance decisions.",
         "default": 30
       },
       "responseTone": {

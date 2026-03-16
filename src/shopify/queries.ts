@@ -56,6 +56,28 @@ export const SHOPIFY_VARIANT_BY_SKU_QUERY = `
         displayName
         price
         inventoryQuantity
+        product {
+          id
+          title
+        }
+      }
+    }
+  }
+`
+
+export const SHOPIFY_VARIANT_BY_SKU_WITH_COST_QUERY = `
+  query SellerVariantBySkuWithCost($skuQuery: String!, $after: String) {
+    productVariants(first: 250, query: $skuQuery, after: $after) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        sku
+        displayName
+        price
+        inventoryQuantity
         inventoryItem {
           unitCost {
             amount
@@ -131,6 +153,30 @@ export const SHOPIFY_PRODUCTS_BY_TITLE_QUERY = `
 
 export const SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY = `
   query SellerProductVariantsPage($productId: ID!, $after: String) {
+    product(id: $productId) {
+      variants(first: 250, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          sku
+          displayName
+          price
+          inventoryQuantity
+          product {
+            id
+            title
+          }
+        }
+      }
+    }
+  }
+`
+
+export const SHOPIFY_PRODUCT_VARIANTS_PAGE_WITH_COST_QUERY = `
+  query SellerProductVariantsPageWithCost($productId: ID!, $after: String) {
     product(id: $productId) {
       variants(first: 250, after: $after) {
         pageInfo {
