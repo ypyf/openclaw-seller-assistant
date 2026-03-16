@@ -926,6 +926,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         snapshot: snapshot.value,
         supplierLeadDays: replenishmentInputs.supplierLeadDays,
         safetyStockDays: replenishmentInputs.safetyStockDays,
+        policy: pluginConfig.decisionPolicy,
       })
 
       return textResult(formatReplenishmentDecision(evaluation))
@@ -972,6 +973,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       const evaluation = evaluateDiscountDecision({
         snapshot: snapshot.value,
         marginFloorPct: pluginConfig.targetMarginFloorPct,
+        policy: pluginConfig.decisionPolicy,
       })
 
       return textResult(
@@ -1023,6 +1025,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       const evaluation = evaluateClearanceDecision({
         snapshot: snapshot.value,
         marginFloorPct: pluginConfig.targetMarginFloorPct,
+        policy: pluginConfig.decisionPolicy,
       })
 
       return textResult(

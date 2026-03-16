@@ -41,6 +41,61 @@
         "description": "Shared lookback window in days used to estimate average daily sales for Shopify-backed replenishment, discount, and clearance decisions.",
         "default": 30
       },
+      "decisionPolicy": {
+        "type": "object",
+        "description": "Optional policy overrides for replenishment, discount, and clearance thresholds.",
+        "additionalProperties": false,
+        "properties": {
+          "weakDemandDailySalesThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Average daily sales below this threshold count as weak demand.",
+            "default": 0.3
+          },
+          "healthyDemandDailySalesThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Average daily sales at or above this threshold count as healthy demand.",
+            "default": 1
+          },
+          "insufficientDataMinLookbackDays": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Lookbacks shorter than this are treated as insufficient demand data.",
+            "default": 14
+          },
+          "insufficientDataMinUnitsSold": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Positive sales volumes below this threshold are treated as insufficient demand data.",
+            "default": 3
+          },
+          "discountMinInventoryDays": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Inventory cover must reach at least this many days before markdown testing is considered.",
+            "default": 60
+          },
+          "clearanceMinInventoryDays": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Inventory cover must reach at least this many days before clearance review is considered.",
+            "default": 120
+          },
+          "clearanceStrongSignalInventoryDays": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Inventory cover at or above this threshold is treated as strong aged-stock pressure for replenishment, discount, and clearance decisions.",
+            "default": 180
+          },
+          "veryLowLookbackUnitsFactor": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Multiplier used to derive the very-low-sales threshold for strong clearance signals from lookback days.",
+            "default": 0.1
+          }
+        }
+      },
       "responseTone": {
         "type": "string",
         "description": "Shared response tone for seller-facing draft outputs.",

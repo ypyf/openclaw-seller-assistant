@@ -98,6 +98,16 @@ Example:
           "supplierLeadDays": 7,
           "safetyStockDays": 5,
           "salesLookbackDays": 30,
+          "decisionPolicy": {
+            "insufficientDataMinUnitsSold": 3,
+            "insufficientDataMinLookbackDays": 14,
+            "weakDemandDailySalesThreshold": 0.3,
+            "healthyDemandDailySalesThreshold": 1,
+            "discountMinInventoryDays": 60,
+            "clearanceMinInventoryDays": 120,
+            "clearanceStrongSignalInventoryDays": 180,
+            "veryLowLookbackUnitsFactor": 0.1
+          },
           "stores": {
             "shopify": [
               {
@@ -128,6 +138,7 @@ In that structure:
 - store-level `supplierLeadDays`, `safetyStockDays`, and `salesLookbackDays` override the plugin-level defaults for that store
 - plugin-level `supplierLeadDays` and `safetyStockDays` remain shared fallbacks for replenishment decisions
 - plugin-level `salesLookbackDays` remains the shared fallback sales window for Shopify-backed sales and product decision tools
+- `decisionPolicy` is the shared policy object for replenishment / discount / clearance thresholds. Omit it to use built-in defaults, or override only the fields you want to tune.
 
 Built-in defaults when a config value is omitted:
 
@@ -136,6 +147,14 @@ Built-in defaults when a config value is omitted:
 - `lowInventoryDays`: `14`
 - `salesLookbackDays`: `30`
 - `responseTone`: `consultative`
+- `decisionPolicy.weakDemandDailySalesThreshold`: `0.3`
+- `decisionPolicy.healthyDemandDailySalesThreshold`: `1`
+- `decisionPolicy.insufficientDataMinLookbackDays`: `14`
+- `decisionPolicy.insufficientDataMinUnitsSold`: `3`
+- `decisionPolicy.discountMinInventoryDays`: `60`
+- `decisionPolicy.clearanceMinInventoryDays`: `120`
+- `decisionPolicy.clearanceStrongSignalInventoryDays`: `180`
+- `decisionPolicy.veryLowLookbackUnitsFactor`: `0.1`
 
 ## Shopify Auth Model
 

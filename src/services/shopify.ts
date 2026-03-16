@@ -30,7 +30,12 @@ import type {
   ShopifyVariantsPage,
   ShopifyVariantSelection,
 } from "../shopify/types.js"
-import { DEFAULT_PLUGIN_CONFIG, type ShopifyStoreConfig } from "../config.js"
+import {
+  DEFAULT_PLUGIN_CONFIG,
+  DEFAULT_PRODUCT_DECISION_POLICY,
+  type ProductDecisionPolicy,
+  type ShopifyStoreConfig,
+} from "../config.js"
 import { createShopifyClient, formatShopifyErrors, getDateRange } from "../shopify/client.js"
 import {
   type FlowResolution,
@@ -50,11 +55,6 @@ import {
 const SHOPIFY_TITLE_SEARCH_LIMIT = 50
 const SHOPIFY_MATCH_CHOICE_LIMIT = 5
 const SHOPIFY_VARIANT_FETCH_BATCH_SIZE = 5
-const WEAK_DEMAND_DAILY_SALES_THRESHOLD = 0.3
-const HEALTHY_DEMAND_DAILY_SALES_THRESHOLD = 1
-const INSUFFICIENT_DATA_MIN_LOOKBACK_DAYS = 14
-const INSUFFICIENT_DATA_MIN_UNITS_SOLD = 3
-const VERY_LOW_LOOKBACK_UNITS_FACTOR = 0.1
 
 export type ShopifyStoreOverviewSnapshot = {
   source: "shopify"
@@ -1563,19 +1563,21 @@ const classifyDemandStatus = (input: {
   lookbackDays: number
   unitsSold: number
   stockoutLikelyAffectedDemand: boolean
+  policy: ProductDecisionPolicy
 }) => {
+  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const hasInsufficientDemandData =
-    input.lookbackDays < INSUFFICIENT_DATA_MIN_LOOKBACK_DAYS ||
+    input.lookbackDays < policy.insufficientDataMinLookbackDays ||
     input.stockoutLikelyAffectedDemand ||
-    (input.unitsSold > 0 && input.unitsSold < INSUFFICIENT_DATA_MIN_UNITS_SOLD)
+    (input.unitsSold > 0 && input.unitsSold < policy.insufficientDataMinUnitsSold)
 
   if (hasInsufficientDemandData) {
     return "insufficient_data"
   }
-  if (input.dailySalesUnits >= HEALTHY_DEMAND_DAILY_SALES_THRESHOLD) {
+  if (input.dailySalesUnits >= policy.healthyDemandDailySalesThreshold) {
     return "healthy"
   }
-  if (input.dailySalesUnits < WEAK_DEMAND_DAILY_SALES_THRESHOLD) {
+  if (input.dailySalesUnits < policy.weakDemandDailySalesThreshold) {
     return "weak"
   }
   return "moderate"
@@ -1585,17 +1587,20 @@ const roundDecisionUnits = (value: number) => Math.max(Math.ceil(value), 0)
 
 const buildProductActionDecisionBase = (input: {
   snapshot: ShopifyProductActionSnapshot
+  policy?: ProductDecisionPolicy
 }): ProductActionDecisionBase => {
+  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const stockoutDetected = input.snapshot.onHandUnits <= 0
   const stockoutLikelyAffectedDemand =
     stockoutDetected &&
     input.snapshot.unitsSold > 0 &&
-    input.snapshot.dailySalesUnits < HEALTHY_DEMAND_DAILY_SALES_THRESHOLD
+    input.snapshot.dailySalesUnits < policy.healthyDemandDailySalesThreshold
   const demandStatus: ProductDecisionDemandStatus = classifyDemandStatus({
     dailySalesUnits: input.snapshot.dailySalesUnits,
     lookbackDays: input.snapshot.lookbackDays,
     unitsSold: input.snapshot.unitsSold,
     stockoutLikelyAffectedDemand,
+    policy,
   })
 
   return {
@@ -1618,7 +1623,9 @@ const buildProductActionDecisionBase = (input: {
 const buildProductActionPricingEvaluation = (input: {
   snapshot: ShopifyProductActionSnapshot
   marginFloorPct?: number
+  policy?: ProductDecisionPolicy
 }) => {
+  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const marginFloorPct = optionalNumber(input.marginFloorPct)
   const currentMarginPct = input.snapshot.currentMarginPct
   const hasMarginData = currentMarginPct !== null
@@ -1629,7 +1636,7 @@ const buildProductActionPricingEvaluation = (input: {
       : false
   const veryLowUnitsSoldThreshold = Math.max(
     1,
-    input.snapshot.lookbackDays * VERY_LOW_LOOKBACK_UNITS_FACTOR,
+    input.snapshot.lookbackDays * policy.veryLowLookbackUnitsFactor,
   )
   const minimumAllowedUnitPrice =
     input.snapshot.averageUnitCost !== null
@@ -1668,9 +1675,12 @@ export const evaluateReplenishmentDecision = (input: {
   snapshot: ShopifyProductActionSnapshot
   supplierLeadDays: number
   safetyStockDays: number
+  policy?: ProductDecisionPolicy
 }): ReplenishmentDecisionEvaluation => {
+  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const base = buildProductActionDecisionBase({
     snapshot: input.snapshot,
+    policy,
   })
   const targetStockUnits = roundDecisionUnits(
     input.snapshot.dailySalesUnits * (input.supplierLeadDays + input.safetyStockDays),
@@ -1687,7 +1697,7 @@ export const evaluateReplenishmentDecision = (input: {
     replenishmentReason = `do_not_restock because no units sold over the last ${input.snapshot.lookbackDays} days.`
   } else if (
     Number.isFinite(input.snapshot.inventoryDaysLeft) &&
-    input.snapshot.inventoryDaysLeft >= 180 &&
+    input.snapshot.inventoryDaysLeft >= policy.clearanceStrongSignalInventoryDays &&
     base.demandStatus === "weak"
   ) {
     replenishmentDecision = "do_not_restock"
@@ -1718,16 +1728,22 @@ export const evaluateReplenishmentDecision = (input: {
 export const evaluateDiscountDecision = (input: {
   snapshot: ShopifyProductActionSnapshot
   marginFloorPct?: number
+  policy?: ProductDecisionPolicy
 }): DiscountDecisionEvaluation => {
+  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const base = buildProductActionDecisionBase({
     snapshot: input.snapshot,
+    policy,
   })
-  const pricing = buildProductActionPricingEvaluation(input)
+  const pricing = buildProductActionPricingEvaluation({
+    ...input,
+    policy,
+  })
 
   let discountDecision: DiscountDecisionEvaluation["discountDecision"]
   let discountReason: string
 
-  if (input.snapshot.inventoryDaysLeft < 60) {
+  if (input.snapshot.inventoryDaysLeft < policy.discountMinInventoryDays) {
     discountDecision = "hold_price"
     discountReason = `hold_price because inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days.`
   } else if (base.demandStatus === "healthy") {
@@ -1737,7 +1753,7 @@ export const evaluateDiscountDecision = (input: {
     discountDecision = "hold_price"
     discountReason =
       "hold_price because recent demand data is insufficient, so discount testing would be premature."
-  } else if (input.snapshot.inventoryDaysLeft >= 180) {
+  } else if (input.snapshot.inventoryDaysLeft >= policy.clearanceStrongSignalInventoryDays) {
     discountDecision = "hold_price"
     discountReason =
       "hold_price because this SKU is better handled as a clearance review than a standard discount test."
@@ -1779,11 +1795,17 @@ export const evaluateDiscountDecision = (input: {
 export const evaluateClearanceDecision = (input: {
   snapshot: ShopifyProductActionSnapshot
   marginFloorPct?: number
+  policy?: ProductDecisionPolicy
 }): ClearanceDecisionEvaluation => {
+  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const base = buildProductActionDecisionBase({
     snapshot: input.snapshot,
+    policy,
   })
-  const pricing = buildProductActionPricingEvaluation(input)
+  const pricing = buildProductActionPricingEvaluation({
+    ...input,
+    policy,
+  })
 
   let clearanceDecision: ClearanceDecisionEvaluation["clearanceDecision"]
   let clearanceReason: string
@@ -1791,14 +1813,14 @@ export const evaluateClearanceDecision = (input: {
   if (input.snapshot.onHandUnits <= 0) {
     clearanceDecision = "not_clearance_candidate"
     clearanceReason = "not_clearance_candidate because there is no on-hand inventory left to clear."
-  } else if (input.snapshot.inventoryDaysLeft < 120) {
+  } else if (input.snapshot.inventoryDaysLeft < policy.clearanceMinInventoryDays) {
     clearanceDecision = "not_clearance_candidate"
     clearanceReason = `not_clearance_candidate because inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days.`
   } else if (base.demandStatus === "healthy") {
     clearanceDecision = "not_clearance_candidate"
     clearanceReason = "not_clearance_candidate because demand remains healthy."
   } else if (
-    input.snapshot.inventoryDaysLeft >= 180 &&
+    input.snapshot.inventoryDaysLeft >= policy.clearanceStrongSignalInventoryDays &&
     base.demandStatus === "weak" &&
     input.snapshot.unitsSold <= pricing.veryLowUnitsSoldThreshold
   ) {
