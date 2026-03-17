@@ -48,11 +48,7 @@ describe("evaluateClearanceDecision", () => {
         point => point.includes("thin sample") || point.includes("too thin"),
       ),
     )
-    assert.deepEqual(
-      evaluation.recommendedActions.map(action => action.owner),
-      ["ops", "sales", "pricing", "review"],
-    )
-    assert.match(evaluation.recommendedActions[2]?.text ?? "", /\$12\.50/)
+    assert.match(evaluation.recommendedActions[2] ?? "", /\$12\.50/)
     assert.equal(evaluation.reviewWindowDays, 14)
     assert.match(evaluation.escalationTrigger ?? "", /escalate/i)
   })
@@ -74,15 +70,9 @@ describe("evaluateClearanceDecision", () => {
       "No clearance action is needed because the SKU has no on-hand inventory.",
     )
     assert.match(evaluation.analysisPoints[0] ?? "", /nothing left to clear/i)
-    assert.match(
-      evaluation.recommendedActions[0]?.text ?? "",
-      /clearance or aged-inventory queues/i,
-    )
-    assert.match(
-      evaluation.recommendedActions[1]?.text ?? "",
-      /Do not schedule clearance placements/i,
-    )
-    assert.match(evaluation.recommendedActions[3]?.text ?? "", /No clearance follow-up is needed/i)
+    assert.match(evaluation.recommendedActions[0] ?? "", /clearance or aged-inventory queues/i)
+    assert.match(evaluation.recommendedActions[1] ?? "", /Do not schedule clearance placements/i)
+    assert.match(evaluation.recommendedActions[3] ?? "", /No clearance follow-up is needed/i)
     assert.equal(evaluation.reviewWindowDays, 0)
     assert.match(evaluation.escalationTrigger ?? "", /inventory becomes available again/i)
     assert.equal(evaluation.analysisPoints.length, 3)
@@ -95,7 +85,7 @@ describe("evaluateClearanceDecision", () => {
     )
     assert.ok(
       evaluation.recommendedActions.every(
-        action => !/standard pricing|standard merchandising/i.test(action.text),
+        action => !/standard pricing|standard merchandising/i.test(action),
       ),
     )
   })
@@ -114,7 +104,7 @@ describe("evaluateClearanceDecision", () => {
     assert.equal(evaluation.clearanceDecision, "clear_inventory")
     assert.equal(evaluation.decisionConfidence, "high")
     assert.match(evaluation.decisionSummary, /clearance now/i)
-    assert.match(evaluation.recommendedActions[1]?.text ?? "", /strong clearance action/i)
+    assert.match(evaluation.recommendedActions[1] ?? "", /strong clearance action/i)
     assert.equal(evaluation.reviewWindowDays, 7)
   })
 
@@ -160,7 +150,7 @@ describe("evaluateDiscountDecision", () => {
         point => point.includes("120.0 days") && point.includes("60-day discount threshold"),
       ),
     )
-    assert.match(evaluation.recommendedActions[2]?.text ?? "", /\$11\.43/)
+    assert.match(evaluation.recommendedActions[2] ?? "", /\$11\.43/)
     assert.equal(evaluation.reviewWindowDays, 7)
     assert.match(evaluation.escalationTrigger ?? "", /clearance review/i)
     assert.doesNotMatch(evaluation.discountReason, /test_discount|hold_price|discount_blocked/)
@@ -181,9 +171,9 @@ describe("evaluateDiscountDecision", () => {
     assert.match(evaluation.discountReason, /clearance review/i)
     assert.match(evaluation.decisionSummary, /clearance review/i)
     assert.match(evaluation.analysisPoints[3] ?? "", /clearance case/i)
-    assert.match(evaluation.recommendedActions[0]?.text ?? "", /clearance review queue/i)
-    assert.match(evaluation.recommendedActions[1]?.text ?? "", /clearance/i)
-    assert.doesNotMatch(evaluation.recommendedActions[1]?.text ?? "", /standard merchandising/i)
+    assert.match(evaluation.recommendedActions[0] ?? "", /clearance review queue/i)
+    assert.match(evaluation.recommendedActions[1] ?? "", /clearance/i)
+    assert.doesNotMatch(evaluation.recommendedActions[1] ?? "", /standard merchandising/i)
     assert.match(evaluation.escalationTrigger ?? "", /clearance/i)
     assert.equal(evaluation.reviewWindowDays, 7)
   })
@@ -206,12 +196,9 @@ describe("evaluateDiscountDecision", () => {
       "No discount action is needed because the SKU has no on-hand inventory.",
     )
     assert.match(evaluation.analysisPoints[0] ?? "", /nothing available to discount/i)
-    assert.match(
-      evaluation.recommendedActions[0]?.text ?? "",
-      /out of markdown or discount queues/i,
-    )
-    assert.match(evaluation.recommendedActions[1]?.text ?? "", /Do not launch discount messaging/i)
-    assert.match(evaluation.recommendedActions[3]?.text ?? "", /No discount follow-up is needed/i)
+    assert.match(evaluation.recommendedActions[0] ?? "", /out of markdown or discount queues/i)
+    assert.match(evaluation.recommendedActions[1] ?? "", /Do not launch discount messaging/i)
+    assert.match(evaluation.recommendedActions[3] ?? "", /No discount follow-up is needed/i)
     assert.equal(evaluation.reviewWindowDays, 0)
     assert.match(evaluation.escalationTrigger ?? "", /inventory becomes available again/i)
     assert.equal(evaluation.analysisPoints.length, 3)
@@ -224,7 +211,7 @@ describe("evaluateDiscountDecision", () => {
     )
     assert.ok(
       evaluation.recommendedActions.every(
-        action => !/standard pricing|future discount floor/i.test(action.text),
+        action => !/standard pricing|future discount floor/i.test(action),
       ),
     )
   })
@@ -247,9 +234,9 @@ describe("evaluateDiscountDecision", () => {
     assert.equal(evaluation.discountDecision, "hold_price")
     assert.match(evaluation.discountReason, /healthy/i)
     assert.equal(evaluation.decisionSummary, "Keep price unchanged for now.")
-    assert.match(evaluation.recommendedActions[0]?.text ?? "", /standard pricing/i)
-    assert.match(evaluation.recommendedActions[1]?.text ?? "", /standard merchandising/i)
-    assert.ok(evaluation.recommendedActions.every(action => !/clearance/i.test(action.text)))
+    assert.match(evaluation.recommendedActions[0] ?? "", /standard pricing/i)
+    assert.match(evaluation.recommendedActions[1] ?? "", /standard merchandising/i)
+    assert.ok(evaluation.recommendedActions.every(action => !/clearance/i.test(action)))
   })
 
   it("does not claim cost data is missing when only current margin is unavailable", () => {
@@ -277,8 +264,8 @@ describe("evaluateDiscountDecision", () => {
     assert.ok(
       evaluation.analysisPoints.every(point => !point.includes("product cost data is missing")),
     )
-    assert.match(evaluation.recommendedActions[2]?.text ?? "", /selling-price data/i)
-    assert.doesNotMatch(evaluation.recommendedActions[2]?.text ?? "", /cost data/i)
+    assert.match(evaluation.recommendedActions[2] ?? "", /selling-price data/i)
+    assert.doesNotMatch(evaluation.recommendedActions[2] ?? "", /cost data/i)
   })
 
   it("treats missing price-and-cost data as a combined pricing-data gap", () => {
@@ -303,7 +290,7 @@ describe("evaluateDiscountDecision", () => {
       ),
     )
     assert.match(
-      evaluation.recommendedActions[2]?.text ?? "",
+      evaluation.recommendedActions[2] ?? "",
       /both product cost and recent selling-price data/i,
     )
   })
@@ -378,7 +365,7 @@ describe("evaluateDiscountDecision", () => {
     assert.ok(
       evaluation.analysisPoints.some(point => point.includes("EUR") || point.includes("€11.43")),
     )
-    assert.match(evaluation.recommendedActions[2]?.text ?? "", /€11\.43/)
+    assert.match(evaluation.recommendedActions[2] ?? "", /€11\.43/)
   })
 
   it("formats zero-sales inventory cover without exposing Infinity in discount analysis", () => {
@@ -415,8 +402,8 @@ describe("evaluateDiscountDecision", () => {
 
     assert.equal(evaluation.discountDecision, "hold_price")
     assert.match(evaluation.analysisPoints[2] ?? "", /gross-margin floor cannot be satisfied/i)
-    assert.match(evaluation.recommendedActions[2]?.text ?? "", /gross-margin floor/i)
-    assert.doesNotMatch(evaluation.recommendedActions[2]?.text ?? "", /Confirm cost data/i)
+    assert.match(evaluation.recommendedActions[2] ?? "", /gross-margin floor/i)
+    assert.doesNotMatch(evaluation.recommendedActions[2] ?? "", /Confirm cost data/i)
   })
 
   it("surfaces invalid margin-floor configuration in blocked-discount summaries", () => {
@@ -457,8 +444,8 @@ describe("evaluateDiscountDecision", () => {
 
     assert.equal(evaluation.clearanceDecision, "clear_inventory")
     assert.match(evaluation.analysisPoints[2] ?? "", /gross-margin floor cannot be satisfied/i)
-    assert.match(evaluation.recommendedActions[2]?.text ?? "", /gross-margin floor/i)
-    assert.doesNotMatch(evaluation.recommendedActions[2]?.text ?? "", /Confirm cost data/i)
+    assert.match(evaluation.recommendedActions[2] ?? "", /gross-margin floor/i)
+    assert.doesNotMatch(evaluation.recommendedActions[2] ?? "", /Confirm cost data/i)
   })
 
   it("uses combined pricing-data remediation in clearance guidance when price and cost are both missing", () => {
@@ -481,7 +468,7 @@ describe("evaluateDiscountDecision", () => {
       ),
     )
     assert.match(
-      evaluation.recommendedActions[2]?.text ?? "",
+      evaluation.recommendedActions[2] ?? "",
       /both product cost and recent selling-price data/i,
     )
   })

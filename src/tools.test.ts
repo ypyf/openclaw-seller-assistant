@@ -126,10 +126,7 @@ describe("decision tool details", () => {
     })
 
     const details = buildDiscountDecisionToolDetails(evaluation, formatOptions)
-    const content = formatProductDecisionToolContent(
-      formatDiscountDecisionFallback(evaluation, formatOptions),
-      details,
-    )
+    const content = formatProductDecisionToolContent(details, { locale: formatOptions.locale })
 
     assert.match(content, /Structured decision data \(for agent use only/)
     assert.match(content, /"toolName": "seller_discount_decision"/)
@@ -178,6 +175,7 @@ describe("decision fallback text", () => {
       fallback,
       /Conclusion:|Objective data:|Current situation:|Analysis:|Recommended actions:/,
     )
+    assert.doesNotMatch(fallback, /\bops:|\bsales:|\bpricing:|\breview:/)
   })
 
   it("uses clearance-review fallback headlines for aged discount cases", () => {
@@ -212,5 +210,17 @@ describe("decision fallback text", () => {
 
     assert.match(fallback, /^No discount action is needed for Short sleeve t-shirt \(WM-04A\)\./)
     assert.doesNotMatch(fallback, /^Hold price/)
+  })
+
+  it("keeps fallback prose free of internal action labels", () => {
+    const evaluation = evaluateClearanceDecision({
+      snapshot: createSnapshot(),
+    })
+
+    const fallback = formatClearanceDecisionFallback(evaluation, formatOptions)
+    const details = buildClearanceDecisionToolDetails(evaluation, formatOptions)
+
+    assert.doesNotMatch(fallback, /\bops:|\bsales:|\bpricing:|\breview:/)
+    assert.equal(details.recommendedActions.length, 4)
   })
 })

@@ -182,12 +182,7 @@ type ProductActionPricingDecisionSupport = ProductActionPricingEvaluation & {
 
 export type ProductDecisionConfidence = "high" | "medium" | "low"
 
-export type ProductDecisionActionOwner = "ops" | "sales" | "pricing" | "review"
-
-export type ProductDecisionAction = {
-  owner: ProductDecisionActionOwner
-  text: string
-}
+export type ProductDecisionAction = string
 
 type ProductActionGuidance = {
   decisionSummary: string
@@ -1698,14 +1693,6 @@ const buildProductActionPricingEvaluation = (input: {
   }
 }
 
-const productDecisionAction = (
-  owner: ProductDecisionActionOwner,
-  text: string,
-): ProductDecisionAction => ({
-  owner,
-  text,
-})
-
 type ProductDecisionCurrencyContext = Pick<
   ShopifyProductActionSnapshot,
   "currencyCode" | "locale"
@@ -1871,34 +1858,22 @@ const buildClearanceGuidance = (input: {
     reviewWindowDays = 0
     escalationTrigger = "Revisit clearance only if inventory becomes available again."
     recommendedActions = [
-      productDecisionAction(
-        "ops",
-        "Remove the SKU from clearance or aged-inventory queues until stock becomes available again.",
-      ),
-      productDecisionAction(
-        "sales",
-        "Do not schedule clearance placements or markdown messaging while on-hand inventory is zero.",
-      ),
-      productDecisionAction(
-        "pricing",
-        buildMissingPriceFloorAction({
-          pricing: input.pricing,
-          invalidMarginFloorText:
-            "If inventory returns and clearance is needed later, fix the configured gross-margin floor before setting a clearance price.",
-          missingCostAndSellingPriceText:
-            "If inventory returns and clearance is needed later, confirm both product cost and recent selling-price data before setting a clearance floor.",
-          missingCostText:
-            "If inventory returns and clearance is needed later, confirm cost data before setting a clearance floor.",
-          missingSellingPriceText:
-            "If inventory returns and clearance is needed later, confirm recent selling-price data before setting a clearance floor.",
-          fallbackText:
-            "No clearance price floor is needed unless inventory becomes available again.",
-        }),
-      ),
-      productDecisionAction(
-        "review",
-        "No clearance follow-up is needed unless inventory becomes available again.",
-      ),
+      "Remove the SKU from clearance or aged-inventory queues until stock becomes available again.",
+      "Do not schedule clearance placements or markdown messaging while on-hand inventory is zero.",
+      buildMissingPriceFloorAction({
+        pricing: input.pricing,
+        invalidMarginFloorText:
+          "If inventory returns and clearance is needed later, fix the configured gross-margin floor before setting a clearance price.",
+        missingCostAndSellingPriceText:
+          "If inventory returns and clearance is needed later, confirm both product cost and recent selling-price data before setting a clearance floor.",
+        missingCostText:
+          "If inventory returns and clearance is needed later, confirm cost data before setting a clearance floor.",
+        missingSellingPriceText:
+          "If inventory returns and clearance is needed later, confirm recent selling-price data before setting a clearance floor.",
+        fallbackText:
+          "No clearance price floor is needed unless inventory becomes available again.",
+      }),
+      "No clearance follow-up is needed unless inventory becomes available again.",
     ]
   } else if (input.clearanceDecision === "clear_inventory") {
     decisionSummary = "Move this SKU into clearance now."
@@ -1909,36 +1884,24 @@ const buildClearanceGuidance = (input: {
     escalationTrigger =
       "If sell-through is still weak after the first clearance window, deepen the markdown or bundle offer."
     recommendedActions = [
-      productDecisionAction(
-        "ops",
-        "Move the SKU into the active clearance queue and avoid fresh buys while inventory is worked down.",
-      ),
-      productDecisionAction(
-        "sales",
-        "Launch a strong clearance action now, using the clearest liquidation levers available such as a dedicated clearance placement, bundle, or deeper markdown.",
-      ),
-      productDecisionAction(
-        "pricing",
-        priceFloor !== null
-          ? `Use ${priceFloor} as the clearance floor${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
-          : buildMissingPriceFloorAction({
-              pricing: input.pricing,
-              invalidMarginFloorText:
-                "Fix the configured gross-margin floor or set a manual clearance floor before launch.",
-              missingCostAndSellingPriceText:
-                "Set a manual clearance floor only after both product cost and recent selling-price data are available.",
-              missingCostText:
-                "Set a manual price floor before launch because cost-based guardrails are unavailable.",
-              missingSellingPriceText:
-                "Set a manual price floor before launch because recent selling-price data is unavailable.",
-              fallbackText:
-                "Set a manual price floor before launch because pricing guardrails are unavailable.",
-            }),
-      ),
-      productDecisionAction(
-        "review",
-        `Review sell-through in ${reviewWindowDays} days and escalate if inventory is still barely moving.`,
-      ),
+      "Move the SKU into the active clearance queue and avoid fresh buys while inventory is worked down.",
+      "Launch a strong clearance action now, using the clearest liquidation levers available such as a dedicated clearance placement, bundle, or deeper markdown.",
+      priceFloor !== null
+        ? `Use ${priceFloor} as the clearance floor${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
+        : buildMissingPriceFloorAction({
+            pricing: input.pricing,
+            invalidMarginFloorText:
+              "Fix the configured gross-margin floor or set a manual clearance floor before launch.",
+            missingCostAndSellingPriceText:
+              "Set a manual clearance floor only after both product cost and recent selling-price data are available.",
+            missingCostText:
+              "Set a manual price floor before launch because cost-based guardrails are unavailable.",
+            missingSellingPriceText:
+              "Set a manual price floor before launch because recent selling-price data is unavailable.",
+            fallbackText:
+              "Set a manual price floor before launch because pricing guardrails are unavailable.",
+          }),
+      `Review sell-through in ${reviewWindowDays} days and escalate if inventory is still barely moving.`,
     ]
   } else if (input.clearanceDecision === "review_for_clearance") {
     decisionSummary =
@@ -1951,34 +1914,22 @@ const buildClearanceGuidance = (input: {
     escalationTrigger =
       "Escalate to an active clearance move if sell-through stays minimal after the test window."
     recommendedActions = [
-      productDecisionAction(
-        "ops",
-        "Pause fresh buys or replenishment and place the SKU on the aged-inventory watchlist.",
-      ),
-      productDecisionAction(
-        "sales",
-        "Start with a controlled clearance test, such as a light markdown, bundle, or dedicated clearance placement, instead of a one-time deep liquidation.",
-      ),
-      productDecisionAction(
-        "pricing",
-        priceFloor !== null
-          ? `Keep any clearance price at or above ${priceFloor}${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
-          : buildMissingPriceFloorAction({
-              pricing: input.pricing,
-              invalidMarginFloorText:
-                "Fix the configured gross-margin floor before setting a clearance floor.",
-              missingCostAndSellingPriceText:
-                "Confirm both product cost and recent selling-price data before setting a clearance floor.",
-              missingCostText: "Confirm cost data before setting a clearance floor.",
-              missingSellingPriceText:
-                "Confirm recent selling-price data before setting a clearance floor.",
-              fallbackText: "Confirm pricing guardrails before setting a clearance floor.",
-            }),
-      ),
-      productDecisionAction(
-        "review",
-        `Review sell-through in ${reviewWindowDays} days and escalate if the SKU still barely moves.`,
-      ),
+      "Pause fresh buys or replenishment and place the SKU on the aged-inventory watchlist.",
+      "Start with a controlled clearance test, such as a light markdown, bundle, or dedicated clearance placement, instead of a one-time deep liquidation.",
+      priceFloor !== null
+        ? `Keep any clearance price at or above ${priceFloor}${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
+        : buildMissingPriceFloorAction({
+            pricing: input.pricing,
+            invalidMarginFloorText:
+              "Fix the configured gross-margin floor before setting a clearance floor.",
+            missingCostAndSellingPriceText:
+              "Confirm both product cost and recent selling-price data before setting a clearance floor.",
+            missingCostText: "Confirm cost data before setting a clearance floor.",
+            missingSellingPriceText:
+              "Confirm recent selling-price data before setting a clearance floor.",
+            fallbackText: "Confirm pricing guardrails before setting a clearance floor.",
+          }),
+      `Review sell-through in ${reviewWindowDays} days and escalate if the SKU still barely moves.`,
     ]
   } else {
     decisionSummary = "Do not move this SKU into clearance right now."
@@ -1992,34 +1943,22 @@ const buildClearanceGuidance = (input: {
     reviewWindowDays = input.base.hasInsufficientDemandData ? 14 : 30
     escalationTrigger = "Reassess sooner if sell-through weakens or inventory cover rises further."
     recommendedActions = [
-      productDecisionAction(
-        "ops",
-        "Keep the SKU out of the clearance queue for now and continue normal stock management.",
-      ),
-      productDecisionAction(
-        "sales",
-        "Keep standard pricing and merchandising in place instead of opening a clearance offer.",
-      ),
-      productDecisionAction(
-        "pricing",
-        priceFloor !== null
-          ? `If you later test markdowns, keep price at or above ${priceFloor}.`
-          : buildMissingPriceFloorAction({
-              pricing: input.pricing,
-              invalidMarginFloorText:
-                "Fix the configured gross-margin floor before setting any markdown floor.",
-              missingCostAndSellingPriceText:
-                "Confirm both product cost and recent selling-price data before setting any markdown floor.",
-              missingCostText: "Confirm cost data before setting any markdown floor.",
-              missingSellingPriceText:
-                "Confirm recent selling-price data before setting any markdown floor.",
-              fallbackText: "Confirm pricing guardrails before setting any markdown floor.",
-            }),
-      ),
-      productDecisionAction(
-        "review",
-        `Reassess within ${reviewWindowDays} days, or sooner if sell-through weakens further.`,
-      ),
+      "Keep the SKU out of the clearance queue for now and continue normal stock management.",
+      "Keep standard pricing and merchandising in place instead of opening a clearance offer.",
+      priceFloor !== null
+        ? `If you later test markdowns, keep price at or above ${priceFloor}.`
+        : buildMissingPriceFloorAction({
+            pricing: input.pricing,
+            invalidMarginFloorText:
+              "Fix the configured gross-margin floor before setting any markdown floor.",
+            missingCostAndSellingPriceText:
+              "Confirm both product cost and recent selling-price data before setting any markdown floor.",
+            missingCostText: "Confirm cost data before setting any markdown floor.",
+            missingSellingPriceText:
+              "Confirm recent selling-price data before setting any markdown floor.",
+            fallbackText: "Confirm pricing guardrails before setting any markdown floor.",
+          }),
+      `Reassess within ${reviewWindowDays} days, or sooner if sell-through weakens further.`,
     ]
   }
 
@@ -2105,33 +2044,21 @@ const buildDiscountGuidance = (input: {
     reviewWindowDays = 0
     escalationTrigger = "Revisit discounting only if inventory becomes available again."
     recommendedActions = [
-      productDecisionAction(
-        "ops",
-        "Keep the SKU out of markdown or discount queues until inventory becomes available again.",
-      ),
-      productDecisionAction(
-        "sales",
-        "Do not launch discount messaging or markdown placements while the SKU is unavailable.",
-      ),
-      productDecisionAction(
-        "pricing",
-        buildMissingPriceFloorAction({
-          pricing: input.pricing,
-          invalidMarginFloorText:
-            "If inventory returns and discounting is needed later, fix the configured gross-margin floor before setting a discount floor.",
-          missingCostAndSellingPriceText:
-            "If inventory returns and discounting is needed later, confirm both product cost and recent selling-price data before setting a discount floor.",
-          missingCostText:
-            "If inventory returns and discounting is needed later, confirm cost data before setting a discount floor.",
-          missingSellingPriceText:
-            "If inventory returns and discounting is needed later, confirm recent selling-price data before setting a discount floor.",
-          fallbackText: "No discount floor is needed unless inventory becomes available again.",
-        }),
-      ),
-      productDecisionAction(
-        "review",
-        "No discount follow-up is needed unless inventory becomes available again.",
-      ),
+      "Keep the SKU out of markdown or discount queues until inventory becomes available again.",
+      "Do not launch discount messaging or markdown placements while the SKU is unavailable.",
+      buildMissingPriceFloorAction({
+        pricing: input.pricing,
+        invalidMarginFloorText:
+          "If inventory returns and discounting is needed later, fix the configured gross-margin floor before setting a discount floor.",
+        missingCostAndSellingPriceText:
+          "If inventory returns and discounting is needed later, confirm both product cost and recent selling-price data before setting a discount floor.",
+        missingCostText:
+          "If inventory returns and discounting is needed later, confirm cost data before setting a discount floor.",
+        missingSellingPriceText:
+          "If inventory returns and discounting is needed later, confirm recent selling-price data before setting a discount floor.",
+        fallbackText: "No discount floor is needed unless inventory becomes available again.",
+      }),
+      "No discount follow-up is needed unless inventory becomes available again.",
     ]
   } else if (input.discountDecision === "test_discount") {
     decisionSummary = "Run a controlled discount test."
@@ -2142,24 +2069,12 @@ const buildDiscountGuidance = (input: {
     escalationTrigger =
       "If sell-through does not improve after the test window, move the SKU into clearance review."
     recommendedActions = [
-      productDecisionAction(
-        "ops",
-        "Keep replenishment conservative while the discount test is running so inventory does not build further.",
-      ),
-      productDecisionAction(
-        "sales",
-        "Run a limited markdown test on this SKU rather than opening a deep or broad promotion immediately.",
-      ),
-      productDecisionAction(
-        "pricing",
-        priceFloor !== null
-          ? `Do not price below ${priceFloor}${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
-          : "Confirm cost data before setting the discount floor.",
-      ),
-      productDecisionAction(
-        "review",
-        `Review sell-through in ${reviewWindowDays} days and escalate only if the markdown does not improve movement.`,
-      ),
+      "Keep replenishment conservative while the discount test is running so inventory does not build further.",
+      "Run a limited markdown test on this SKU rather than opening a deep or broad promotion immediately.",
+      priceFloor !== null
+        ? `Do not price below ${priceFloor}${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
+        : "Confirm cost data before setting the discount floor.",
+      `Review sell-through in ${reviewWindowDays} days and escalate only if the markdown does not improve movement.`,
     ]
   } else if (input.discountDecision === "discount_blocked") {
     decisionSummary = !input.pricing.hasValidMarginFloor
@@ -2196,32 +2111,20 @@ const buildDiscountGuidance = (input: {
             ? "Revisit discounting once recent selling-price data is available."
             : "Revisit discounting if margin improves or the SKU ages into a clearance case."
     recommendedActions = [
-      productDecisionAction(
-        "ops",
-        "Hold standard pricing until the margin constraint is resolved.",
-      ),
-      productDecisionAction(
-        "sales",
-        "Avoid leaning on discount-led sell-through for this SKU until the pricing guardrails are clear.",
-      ),
-      productDecisionAction(
-        "pricing",
-        !input.pricing.hasValidMarginFloor
-          ? "Fix the configured gross-margin floor before attempting a discount test."
-          : pricingDataGap === "missing_cost_and_selling_price"
-            ? "Populate both product cost and recent selling-price data before testing a discount."
-            : pricingDataGap === "missing_cost"
-              ? "Populate product cost data before testing a discount."
-              : pricingDataGap === "missing_selling_price"
-                ? "Populate recent selling-price data before testing a discount."
-                : input.pricing.marginAtOrBelowFloor
-                  ? "Raise price or wait for cost improvements before discounting."
-                  : "Confirm economics before introducing any markdown.",
-      ),
-      productDecisionAction(
-        "review",
-        `Reassess within ${reviewWindowDays} days, or sooner once the margin constraint is resolved.`,
-      ),
+      "Hold standard pricing until the margin constraint is resolved.",
+      "Avoid leaning on discount-led sell-through for this SKU until the pricing guardrails are clear.",
+      !input.pricing.hasValidMarginFloor
+        ? "Fix the configured gross-margin floor before attempting a discount test."
+        : pricingDataGap === "missing_cost_and_selling_price"
+          ? "Populate both product cost and recent selling-price data before testing a discount."
+          : pricingDataGap === "missing_cost"
+            ? "Populate product cost data before testing a discount."
+            : pricingDataGap === "missing_selling_price"
+              ? "Populate recent selling-price data before testing a discount."
+              : input.pricing.marginAtOrBelowFloor
+                ? "Raise price or wait for cost improvements before discounting."
+                : "Confirm economics before introducing any markdown.",
+      `Reassess within ${reviewWindowDays} days, or sooner once the margin constraint is resolved.`,
     ]
   } else {
     decisionSummary = agedIntoClearanceReview
@@ -2241,55 +2144,42 @@ const buildDiscountGuidance = (input: {
       ? "Start a clearance review now and escalate to an active clearance move if sell-through stays weak."
       : "Revisit discounting if inventory cover keeps rising and demand weakens further."
     recommendedActions = [
-      productDecisionAction(
-        "ops",
-        agedIntoClearanceReview
-          ? "Hold off on fresh discount testing and move the SKU onto the clearance review queue."
-          : "Leave the SKU on standard pricing for now.",
-      ),
-      productDecisionAction(
-        "sales",
-        agedIntoClearanceReview
-          ? "Plan the next commercial move as a clearance review, using clearance placement or liquidation levers instead of normal merchandising."
-          : "Use standard merchandising rather than a markdown until a clearer discount case emerges.",
-      ),
-      productDecisionAction(
-        "pricing",
-        agedIntoClearanceReview
-          ? priceFloor !== null
-            ? `Use ${priceFloor} as the minimum price if the SKU moves into clearance.`
-            : buildMissingPriceFloorAction({
-                pricing: input.pricing,
-                invalidMarginFloorText:
-                  "Fix the configured gross-margin floor before setting a clearance floor.",
-                missingCostAndSellingPriceText:
-                  "Confirm both product cost and recent selling-price data before setting a clearance floor.",
-                missingCostText: "Confirm cost data before setting a clearance floor.",
-                missingSellingPriceText:
-                  "Confirm recent selling-price data before setting a clearance floor.",
-                fallbackText: "Confirm pricing guardrails before setting a clearance floor.",
-              })
-          : priceFloor !== null
-            ? `If you later test a discount, keep price at or above ${priceFloor}.`
-            : buildMissingPriceFloorAction({
-                pricing: input.pricing,
-                invalidMarginFloorText:
-                  "Fix the configured gross-margin floor before setting any future discount floor.",
-                missingCostAndSellingPriceText:
-                  "Confirm both product cost and recent selling-price data before setting any future discount floor.",
-                missingCostText: "Confirm cost data before setting any future discount floor.",
-                missingSellingPriceText:
-                  "Confirm recent selling-price data before setting any future discount floor.",
-                fallbackText:
-                  "Confirm pricing guardrails before setting any future discount floor.",
-              }),
-      ),
-      productDecisionAction(
-        "review",
-        agedIntoClearanceReview
-          ? `Complete the clearance review within ${reviewWindowDays} days and escalate if inventory still barely moves.`
-          : `Reassess within ${reviewWindowDays} days, or sooner if inventory cover rises further.`,
-      ),
+      agedIntoClearanceReview
+        ? "Hold off on fresh discount testing and move the SKU onto the clearance review queue."
+        : "Leave the SKU on standard pricing for now.",
+      agedIntoClearanceReview
+        ? "Plan the next commercial move as a clearance review, using clearance placement or liquidation levers instead of normal merchandising."
+        : "Use standard merchandising rather than a markdown until a clearer discount case emerges.",
+      agedIntoClearanceReview
+        ? priceFloor !== null
+          ? `Use ${priceFloor} as the minimum price if the SKU moves into clearance.`
+          : buildMissingPriceFloorAction({
+              pricing: input.pricing,
+              invalidMarginFloorText:
+                "Fix the configured gross-margin floor before setting a clearance floor.",
+              missingCostAndSellingPriceText:
+                "Confirm both product cost and recent selling-price data before setting a clearance floor.",
+              missingCostText: "Confirm cost data before setting a clearance floor.",
+              missingSellingPriceText:
+                "Confirm recent selling-price data before setting a clearance floor.",
+              fallbackText: "Confirm pricing guardrails before setting a clearance floor.",
+            })
+        : priceFloor !== null
+          ? `If you later test a discount, keep price at or above ${priceFloor}.`
+          : buildMissingPriceFloorAction({
+              pricing: input.pricing,
+              invalidMarginFloorText:
+                "Fix the configured gross-margin floor before setting any future discount floor.",
+              missingCostAndSellingPriceText:
+                "Confirm both product cost and recent selling-price data before setting any future discount floor.",
+              missingCostText: "Confirm cost data before setting any future discount floor.",
+              missingSellingPriceText:
+                "Confirm recent selling-price data before setting any future discount floor.",
+              fallbackText: "Confirm pricing guardrails before setting any future discount floor.",
+            }),
+      agedIntoClearanceReview
+        ? `Complete the clearance review within ${reviewWindowDays} days and escalate if inventory still barely moves.`
+        : `Reassess within ${reviewWindowDays} days, or sooner if inventory cover rises further.`,
     ]
   }
 

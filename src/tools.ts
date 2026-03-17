@@ -490,32 +490,21 @@ export type StructuredProductDecisionDetails = {
   }
 }
 
-const formatDecisionAction = (input: ProductDecisionAction) => {
-  const ownerLabels = {
-    ops: "ops",
-    sales: "sales",
-    pricing: "pricing",
-    review: "review",
-  } satisfies Record<ProductDecisionAction["owner"], string>
-
-  return `${ownerLabels[input.owner]}: ${input.text}`
-}
-
-const formatDiscountDecisionHeadline = (input: DiscountDecisionEvaluation) => {
-  const productSummary = `${input.productName} (${input.sku})`
-  if (input.discountDecision === "test_discount") {
+const formatDiscountDecisionHeadline = (details: StructuredProductDecisionDetails) => {
+  const productSummary = `${details.facts.productName} (${details.facts.sku})`
+  if (details.decision.key === "test_discount") {
     return `Test discount for ${productSummary}.`
   }
-  if (input.discountDecision === "discount_blocked") {
+  if (details.decision.key === "discount_blocked") {
     return `Discount blocked for ${productSummary}.`
   }
-  if (input.onHandUnits <= 0) {
+  if (details.facts.onHandUnits <= 0) {
     return `No discount action is needed for ${productSummary}.`
   }
 
   const routesToClearanceReview =
-    input.decisionSummary.toLowerCase().includes("clearance review") ||
-    input.discountReason.toLowerCase().includes("clearance review")
+    details.decision.summary.toLowerCase().includes("clearance review") ||
+    details.decision.reason.toLowerCase().includes("clearance review")
   if (routesToClearanceReview) {
     return `Start clearance review for ${productSummary}.`
   }
@@ -532,6 +521,15 @@ const formatClearanceDecisionLabel = (value: ClearanceDecisionEvaluation["cleara
   }
   return "Not a clearance candidate"
 }
+
+const formatClearanceDecisionHeadline = (details: StructuredProductDecisionDetails) =>
+  `${formatClearanceDecisionLabel(
+    details.decision.key === "clear_inventory" ||
+      details.decision.key === "review_for_clearance" ||
+      details.decision.key === "not_clearance_candidate"
+      ? details.decision.key
+      : "not_clearance_candidate",
+  )} for ${details.facts.productName} (${details.facts.sku}).`
 
 const buildStructuredProductDecisionFacts = (
   input: {
@@ -590,8 +588,7 @@ const formatProductDecisionFactsFallback = (
   return `Store ${input.storeName}: ${input.productName} (${input.sku}) sold ${Math.round(input.unitsSold)} units in the last ${input.lookbackDays} days, with ${Math.round(input.onHandUnits)} units on hand and ${input.inventoryCoverText} of inventory cover.${averagePriceSentence}${marginSentence}${floorSentence}`
 }
 
-const formatRecommendedActionsFallback = (actions: ProductDecisionAction[]) =>
-  actions.map(formatDecisionAction).join(" ")
+const formatRecommendedActionsFallback = (actions: ProductDecisionAction[]) => actions.join(" ")
 
 export const buildDiscountDecisionToolDetails = (
   input: DiscountDecisionEvaluation,
@@ -651,37 +648,50 @@ export const formatStructuredProductDecisionDataBlock = (
     "```",
   ].join("\n")
 
-export const formatProductDecisionToolContent = (
-  fallbackText: string,
+const formatProductDecisionFallback = (
   details: StructuredProductDecisionDetails,
-) => [fallbackText, "", formatStructuredProductDecisionDataBlock(details)].join("\n")
+  options: { locale: string },
+) => {
+  const headline =
+    details.decisionType === "discount"
+      ? formatDiscountDecisionHeadline(details)
+      : formatClearanceDecisionHeadline(details)
+
+  return [
+    headline,
+    formatProductDecisionFactsFallback(details.facts, { locale: options.locale }),
+    details.decision.summary,
+    `Reason: ${details.decision.reason}`,
+    `Next steps: ${formatRecommendedActionsFallback(details.recommendedActions)}`,
+  ].join(" ")
+}
+
+export const formatProductDecisionToolContent = (
+  details: StructuredProductDecisionDetails,
+  options: { locale: string },
+) =>
+  [
+    formatProductDecisionFallback(details, { locale: options.locale }),
+    "",
+    formatStructuredProductDecisionDataBlock(details),
+  ].join("\n")
 
 export const formatDiscountDecisionFallback = (
   input: DiscountDecisionEvaluation,
   options: { locale: string; fallbackCurrency: string },
 ) => {
-  const facts = buildStructuredProductDecisionFacts(input, options)
-  return [
-    formatDiscountDecisionHeadline(input),
-    formatProductDecisionFactsFallback(facts, { locale: options.locale }),
-    input.decisionSummary,
-    `Reason: ${input.discountReason}`,
-    `Next steps: ${formatRecommendedActionsFallback(input.recommendedActions)}`,
-  ].join(" ")
+  return formatProductDecisionFallback(buildDiscountDecisionToolDetails(input, options), {
+    locale: options.locale,
+  })
 }
 
 export const formatClearanceDecisionFallback = (
   input: ClearanceDecisionEvaluation,
   options: { locale: string; fallbackCurrency: string },
 ) => {
-  const facts = buildStructuredProductDecisionFacts(input, options)
-  return [
-    `${formatClearanceDecisionLabel(input.clearanceDecision)} for ${input.productName} (${input.sku}).`,
-    formatProductDecisionFactsFallback(facts, { locale: options.locale }),
-    input.decisionSummary,
-    `Reason: ${input.clearanceReason}`,
-    `Next steps: ${formatRecommendedActionsFallback(input.recommendedActions)}`,
-  ].join(" ")
+  return formatProductDecisionFallback(buildClearanceDecisionToolDetails(input, options), {
+    locale: options.locale,
+  })
 }
 
 const formatReplenishmentDecision = (input: ReplenishmentDecisionEvaluation) =>
@@ -1131,10 +1141,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       const details = buildDiscountDecisionToolDetails(evaluation, formatOptions)
 
       return textResultWithDetails(
-        formatProductDecisionToolContent(
-          formatDiscountDecisionFallback(evaluation, formatOptions),
-          details,
-        ),
+        formatProductDecisionToolContent(details, { locale: pluginConfig.locale }),
         details,
       )
     },
@@ -1187,10 +1194,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       const details = buildClearanceDecisionToolDetails(evaluation, formatOptions)
 
       return textResultWithDetails(
-        formatProductDecisionToolContent(
-          formatClearanceDecisionFallback(evaluation, formatOptions),
-          details,
-        ),
+        formatProductDecisionToolContent(details, { locale: pluginConfig.locale }),
         details,
       )
     },
