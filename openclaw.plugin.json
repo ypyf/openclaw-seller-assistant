@@ -2,7 +2,7 @@
   "id": "seller-assistant",
   "name": "Seller Assistant",
   "description": "Seller assistant tools for pricing, RFQ replies, inventory checks, and campaign planning.",
-  "version": "2026.3.16",
+  "version": "2026.3.18",
   "skills": ["./skills"],
   "configSchema": {
     "type": "object",
