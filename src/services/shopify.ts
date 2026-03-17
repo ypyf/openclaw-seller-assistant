@@ -9,7 +9,7 @@ import {
   SHOPIFY_VARIANTS_PAGE_QUERY,
   SHOPIFY_VARIANT_BY_SKU_QUERY,
   SHOPIFY_VARIANT_BY_SKU_WITH_COST_QUERY,
-} from "../shopify/queries.js"
+} from "../shopify/queries.ts"
 import type {
   ShopifyGraphQLClient,
   ShopifyGraphQLResponse,
@@ -29,28 +29,30 @@ import type {
   ShopifyVariantLookupPage,
   ShopifyVariantsPage,
   ShopifyVariantSelection,
-} from "../shopify/types.js"
+} from "../shopify/types.ts"
 import {
   DEFAULT_PLUGIN_CONFIG,
   DEFAULT_PRODUCT_DECISION_POLICY,
   type ProductDecisionPolicy,
   type ShopifyStoreConfig,
-} from "../config.js"
-import { createShopifyClient, formatShopifyErrors, getDateRange } from "../shopify/client.js"
+} from "../config.ts"
+import { createShopifyClient, formatShopifyErrors, getDateRange } from "../shopify/client.ts"
 import {
+  currency,
   type FlowResolution,
   grossMarginPct,
   minimumPriceForGrossMargin,
   needsInput,
   normalizeSku,
   optionalNumber,
+  percentage,
   ready,
   sum,
   toArray,
   toNumber,
   tokenizeSearchTerms,
   unique,
-} from "../utils.js"
+} from "../utils.ts"
 
 const SHOPIFY_TITLE_SEARCH_LIMIT = 50
 const SHOPIFY_MATCH_CHOICE_LIMIT = 5
@@ -172,6 +174,30 @@ type ProductActionPricingEvaluation = {
   maximumDiscountPctFromAveragePrice: number | null
 }
 
+type ProductActionPricingDecisionSupport = ProductActionPricingEvaluation & {
+  hasMarginData: boolean
+  marginAtOrBelowFloor: boolean
+  veryLowUnitsSoldThreshold: number
+}
+
+export type ProductDecisionConfidence = "high" | "medium" | "low"
+
+export type ProductDecisionActionOwner = "ops" | "sales" | "pricing" | "review"
+
+export type ProductDecisionAction = {
+  owner: ProductDecisionActionOwner
+  text: string
+}
+
+type ProductActionGuidance = {
+  decisionSummary: string
+  decisionConfidence: ProductDecisionConfidence
+  analysisPoints: string[]
+  recommendedActions: ProductDecisionAction[]
+  reviewWindowDays: number
+  escalationTrigger: string | null
+}
+
 export type ReplenishmentDecisionEvaluation = ProductActionDecisionBase & {
   targetStockUnits: number
   recommendedReorderUnits: number
@@ -180,13 +206,15 @@ export type ReplenishmentDecisionEvaluation = ProductActionDecisionBase & {
 }
 
 export type DiscountDecisionEvaluation = ProductActionDecisionBase &
-  ProductActionPricingEvaluation & {
+  ProductActionPricingEvaluation &
+  ProductActionGuidance & {
     discountDecision: "hold_price" | "test_discount" | "discount_blocked"
     discountReason: string
   }
 
 export type ClearanceDecisionEvaluation = ProductActionDecisionBase &
-  ProductActionPricingEvaluation & {
+  ProductActionPricingEvaluation &
+  ProductActionGuidance & {
     clearanceDecision: "not_clearance_candidate" | "review_for_clearance" | "clear_inventory"
     clearanceReason: string
   }
@@ -1624,7 +1652,7 @@ const buildProductActionPricingEvaluation = (input: {
   snapshot: ShopifyProductActionSnapshot
   marginFloorPct?: number
   policy?: ProductDecisionPolicy
-}) => {
+}): ProductActionPricingDecisionSupport => {
   const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const marginFloorPct = optionalNumber(input.marginFloorPct)
   const currentMarginPct = input.snapshot.currentMarginPct
@@ -1667,6 +1695,631 @@ const buildProductActionPricingEvaluation = (input: {
     hasMarginData,
     marginAtOrBelowFloor,
     veryLowUnitsSoldThreshold,
+  }
+}
+
+const productDecisionAction = (
+  owner: ProductDecisionActionOwner,
+  text: string,
+): ProductDecisionAction => ({
+  owner,
+  text,
+})
+
+type ProductDecisionCurrencyContext = Pick<
+  ShopifyProductActionSnapshot,
+  "currencyCode" | "locale"
+> & {
+  fallbackCurrency: string
+}
+
+type PricingDataGap = "missing_cost" | "missing_selling_price" | "missing_cost_and_selling_price"
+
+const formatSnapshotCurrency = (snapshot: ProductDecisionCurrencyContext, value: number) =>
+  currency(value, snapshot.currencyCode ?? snapshot.fallbackCurrency, snapshot.locale)
+
+const formatRelativeDiscount = (value: number | null) =>
+  value !== null && value > 0 ? `, about ${percentage(value)} below the current average price` : ""
+
+const resolvePricingDataGap = (
+  pricing: ProductActionPricingDecisionSupport,
+): PricingDataGap | null => {
+  if (pricing.hasMarginData) {
+    return null
+  }
+  const missingCost = pricing.averageUnitCost === null
+  const missingSellingPrice = pricing.averageUnitPrice <= 0
+
+  if (missingCost && missingSellingPrice) {
+    return "missing_cost_and_selling_price"
+  }
+  if (missingCost) {
+    return "missing_cost"
+  }
+  if (missingSellingPrice) {
+    return "missing_selling_price"
+  }
+  return null
+}
+
+const formatInventoryCoverDays = (value: number) =>
+  Number.isFinite(value) ? `${value.toFixed(1)} days` : "n/a (no recent sales detected)"
+
+const buildMissingPriceFloorAction = (input: {
+  pricing: ProductActionPricingDecisionSupport
+  invalidMarginFloorText: string
+  missingCostAndSellingPriceText: string
+  missingCostText: string
+  missingSellingPriceText: string
+  fallbackText: string
+}) => {
+  const pricingDataGap = resolvePricingDataGap(input.pricing)
+  if (!input.pricing.hasValidMarginFloor) {
+    return input.invalidMarginFloorText
+  }
+  if (pricingDataGap === "missing_cost") {
+    return input.missingCostText
+  }
+  if (pricingDataGap === "missing_cost_and_selling_price") {
+    return input.missingCostAndSellingPriceText
+  }
+  if (pricingDataGap === "missing_selling_price") {
+    return input.missingSellingPriceText
+  }
+  return input.fallbackText
+}
+
+const buildDemandAnalysisPoint = (
+  snapshot: ShopifyProductActionSnapshot,
+  demandStatus: ProductDecisionDemandStatus,
+  hasInsufficientDemandData: boolean,
+) => {
+  const unitsSoldSummary = `${Math.round(snapshot.unitsSold)} units over the last ${snapshot.lookbackDays} days (${snapshot.dailySalesUnits.toFixed(2)}/day)`
+  if (hasInsufficientDemandData) {
+    return `Recent sales are ${unitsSoldSummary}, but the sample window is not reliable enough to classify demand confidently.`
+  }
+  if (snapshot.unitsSold === 0) {
+    return `No units sold over the last ${snapshot.lookbackDays} days, which indicates extremely weak demand.`
+  }
+  if (demandStatus === "weak") {
+    return `Recent sales are ${unitsSoldSummary}, which indicates weak demand.`
+  }
+  if (demandStatus === "healthy") {
+    return `Recent sales are ${unitsSoldSummary}, which indicates healthy demand.`
+  }
+  return `Recent sales are ${unitsSoldSummary}, which indicates moderate demand.`
+}
+
+const buildPricingAnalysisPoint = (
+  snapshot: ProductDecisionCurrencyContext,
+  pricing: ProductActionPricingDecisionSupport,
+) => {
+  const pricingDataGap = resolvePricingDataGap(pricing)
+  if (!pricing.hasValidMarginFloor) {
+    return `Pricing guardrails are unavailable because the configured ${percentage(pricing.marginFloorPct ?? 0)} gross-margin floor cannot be satisfied with a finite selling price.`
+  }
+  if (pricingDataGap !== null) {
+    if (pricingDataGap === "missing_cost_and_selling_price") {
+      return "Pricing guardrails are unavailable because both product cost data and recent selling price data are missing."
+    }
+    if (pricingDataGap === "missing_cost") {
+      return "Pricing guardrails are unavailable because product cost data is missing."
+    }
+    if (pricing.minimumAllowedUnitPrice !== null) {
+      return `Current margin is unavailable because recent selling price data is missing, but the cost-aware floor remains ${formatSnapshotCurrency(snapshot, pricing.minimumAllowedUnitPrice)}.`
+    }
+    return "Current margin is unavailable because recent selling price data is missing."
+  }
+  if (pricing.marginAtOrBelowFloor && pricing.marginFloorPct !== null) {
+    return `Current margin is ${percentage(pricing.currentMarginPct ?? 0)}, already at or below the configured ${percentage(pricing.marginFloorPct)} floor.`
+  }
+  if (
+    pricing.minimumAllowedUnitPrice !== null &&
+    pricing.averageUnitPrice > 0 &&
+    pricing.minimumAllowedUnitPrice >= pricing.averageUnitPrice
+  ) {
+    return `Current margin is ${percentage(pricing.currentMarginPct ?? 0)}, already at or below the cost-aware floor of ${formatSnapshotCurrency(snapshot, pricing.minimumAllowedUnitPrice)}. Any safe pricing move would require raising price rather than discounting.`
+  }
+  if (pricing.minimumAllowedUnitPrice !== null) {
+    return `Current margin is ${percentage(pricing.currentMarginPct ?? 0)}, leaving room to move price while staying above ${formatSnapshotCurrency(snapshot, pricing.minimumAllowedUnitPrice)}.`
+  }
+  return `Current margin is ${percentage(pricing.currentMarginPct ?? 0)}.`
+}
+
+const buildClearanceGuidance = (input: {
+  snapshot: ShopifyProductActionSnapshot
+  base: ProductActionDecisionBase
+  pricing: ProductActionPricingDecisionSupport
+  policy: ProductDecisionPolicy
+  fallbackCurrency: string
+  clearanceDecision: ClearanceDecisionEvaluation["clearanceDecision"]
+}): ProductActionGuidance => {
+  const priceFloor =
+    input.pricing.minimumAllowedUnitPrice !== null
+      ? formatSnapshotCurrency(
+          {
+            currencyCode: input.snapshot.currencyCode,
+            locale: input.snapshot.locale,
+            fallbackCurrency: input.fallbackCurrency,
+          },
+          input.pricing.minimumAllowedUnitPrice,
+        )
+      : null
+  const noInventoryToClear = input.snapshot.onHandUnits <= 0
+  const inventoryPoint = noInventoryToClear
+    ? "On-hand inventory is 0 units, so there is nothing left to clear."
+    : !Number.isFinite(input.snapshot.inventoryDaysLeft)
+      ? `Inventory cover is n/a (no recent sales detected), which is treated as beyond the ${input.policy.clearanceMinInventoryDays}-day clearance review threshold and the ${input.policy.clearanceStrongSignalInventoryDays}-day strong-signal threshold.`
+      : input.snapshot.inventoryDaysLeft >= input.policy.clearanceStrongSignalInventoryDays
+        ? `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, well above the ${input.policy.clearanceMinInventoryDays}-day clearance review threshold and the ${input.policy.clearanceStrongSignalInventoryDays}-day strong-signal threshold.`
+        : input.snapshot.inventoryDaysLeft >= input.policy.clearanceMinInventoryDays
+          ? `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, above the ${input.policy.clearanceMinInventoryDays}-day clearance review threshold.`
+          : `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, still below the ${input.policy.clearanceMinInventoryDays}-day clearance review threshold.`
+
+  let decisionSummary: string
+  let decisionConfidence: ProductDecisionConfidence
+  let decisionAnalysis: string
+  let reviewWindowDays: number
+  let escalationTrigger: string | null
+  let recommendedActions: ProductDecisionAction[]
+
+  if (noInventoryToClear) {
+    decisionSummary = "No clearance action is needed because the SKU has no on-hand inventory."
+    decisionConfidence = "high"
+    decisionAnalysis =
+      "There is no remaining stock to liquidate, so clearance pricing and merchandising are unnecessary."
+    reviewWindowDays = 0
+    escalationTrigger = "Revisit clearance only if inventory becomes available again."
+    recommendedActions = [
+      productDecisionAction(
+        "ops",
+        "Remove the SKU from clearance or aged-inventory queues until stock becomes available again.",
+      ),
+      productDecisionAction(
+        "sales",
+        "Do not schedule clearance placements or markdown messaging while on-hand inventory is zero.",
+      ),
+      productDecisionAction(
+        "pricing",
+        buildMissingPriceFloorAction({
+          pricing: input.pricing,
+          invalidMarginFloorText:
+            "If inventory returns and clearance is needed later, fix the configured gross-margin floor before setting a clearance price.",
+          missingCostAndSellingPriceText:
+            "If inventory returns and clearance is needed later, confirm both product cost and recent selling-price data before setting a clearance floor.",
+          missingCostText:
+            "If inventory returns and clearance is needed later, confirm cost data before setting a clearance floor.",
+          missingSellingPriceText:
+            "If inventory returns and clearance is needed later, confirm recent selling-price data before setting a clearance floor.",
+          fallbackText:
+            "No clearance price floor is needed unless inventory becomes available again.",
+        }),
+      ),
+      productDecisionAction(
+        "review",
+        "No clearance follow-up is needed unless inventory becomes available again.",
+      ),
+    ]
+  } else if (input.clearanceDecision === "clear_inventory") {
+    decisionSummary = "Move this SKU into clearance now."
+    decisionConfidence = input.base.hasInsufficientDemandData ? "medium" : "high"
+    decisionAnalysis =
+      "The combination of aging inventory and minimal recent sell-through supports an immediate clearance move."
+    reviewWindowDays = 7
+    escalationTrigger =
+      "If sell-through is still weak after the first clearance window, deepen the markdown or bundle offer."
+    recommendedActions = [
+      productDecisionAction(
+        "ops",
+        "Move the SKU into the active clearance queue and avoid fresh buys while inventory is worked down.",
+      ),
+      productDecisionAction(
+        "sales",
+        "Launch a strong clearance action now, using the clearest liquidation levers available such as a dedicated clearance placement, bundle, or deeper markdown.",
+      ),
+      productDecisionAction(
+        "pricing",
+        priceFloor !== null
+          ? `Use ${priceFloor} as the clearance floor${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
+          : buildMissingPriceFloorAction({
+              pricing: input.pricing,
+              invalidMarginFloorText:
+                "Fix the configured gross-margin floor or set a manual clearance floor before launch.",
+              missingCostAndSellingPriceText:
+                "Set a manual clearance floor only after both product cost and recent selling-price data are available.",
+              missingCostText:
+                "Set a manual price floor before launch because cost-based guardrails are unavailable.",
+              missingSellingPriceText:
+                "Set a manual price floor before launch because recent selling-price data is unavailable.",
+              fallbackText:
+                "Set a manual price floor before launch because pricing guardrails are unavailable.",
+            }),
+      ),
+      productDecisionAction(
+        "review",
+        `Review sell-through in ${reviewWindowDays} days and escalate if inventory is still barely moving.`,
+      ),
+    ]
+  } else if (input.clearanceDecision === "review_for_clearance") {
+    decisionSummary =
+      "Start a controlled clearance test, but do not treat this as a full liquidation yet."
+    decisionConfidence = input.base.hasInsufficientDemandData ? "low" : "medium"
+    decisionAnalysis = input.base.hasInsufficientDemandData
+      ? "The stock signal is strong, but the recent sales sample is still too thin for a high-confidence liquidation call."
+      : "The SKU has aged enough to justify a controlled clearance test before a deeper markdown."
+    reviewWindowDays = input.base.hasInsufficientDemandData ? 14 : 7
+    escalationTrigger =
+      "Escalate to an active clearance move if sell-through stays minimal after the test window."
+    recommendedActions = [
+      productDecisionAction(
+        "ops",
+        "Pause fresh buys or replenishment and place the SKU on the aged-inventory watchlist.",
+      ),
+      productDecisionAction(
+        "sales",
+        "Start with a controlled clearance test, such as a light markdown, bundle, or dedicated clearance placement, instead of a one-time deep liquidation.",
+      ),
+      productDecisionAction(
+        "pricing",
+        priceFloor !== null
+          ? `Keep any clearance price at or above ${priceFloor}${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
+          : buildMissingPriceFloorAction({
+              pricing: input.pricing,
+              invalidMarginFloorText:
+                "Fix the configured gross-margin floor before setting a clearance floor.",
+              missingCostAndSellingPriceText:
+                "Confirm both product cost and recent selling-price data before setting a clearance floor.",
+              missingCostText: "Confirm cost data before setting a clearance floor.",
+              missingSellingPriceText:
+                "Confirm recent selling-price data before setting a clearance floor.",
+              fallbackText: "Confirm pricing guardrails before setting a clearance floor.",
+            }),
+      ),
+      productDecisionAction(
+        "review",
+        `Review sell-through in ${reviewWindowDays} days and escalate if the SKU still barely moves.`,
+      ),
+    ]
+  } else {
+    decisionSummary = "Do not move this SKU into clearance right now."
+    decisionConfidence =
+      input.base.hasInsufficientDemandData ||
+      input.snapshot.inventoryDaysLeft >= input.policy.clearanceMinInventoryDays
+        ? "medium"
+        : "high"
+    decisionAnalysis =
+      "Current evidence does not justify a clearance move yet, so standard pricing and merchandising should stay in place."
+    reviewWindowDays = input.base.hasInsufficientDemandData ? 14 : 30
+    escalationTrigger = "Reassess sooner if sell-through weakens or inventory cover rises further."
+    recommendedActions = [
+      productDecisionAction(
+        "ops",
+        "Keep the SKU out of the clearance queue for now and continue normal stock management.",
+      ),
+      productDecisionAction(
+        "sales",
+        "Keep standard pricing and merchandising in place instead of opening a clearance offer.",
+      ),
+      productDecisionAction(
+        "pricing",
+        priceFloor !== null
+          ? `If you later test markdowns, keep price at or above ${priceFloor}.`
+          : buildMissingPriceFloorAction({
+              pricing: input.pricing,
+              invalidMarginFloorText:
+                "Fix the configured gross-margin floor before setting any markdown floor.",
+              missingCostAndSellingPriceText:
+                "Confirm both product cost and recent selling-price data before setting any markdown floor.",
+              missingCostText: "Confirm cost data before setting any markdown floor.",
+              missingSellingPriceText:
+                "Confirm recent selling-price data before setting any markdown floor.",
+              fallbackText: "Confirm pricing guardrails before setting any markdown floor.",
+            }),
+      ),
+      productDecisionAction(
+        "review",
+        `Reassess within ${reviewWindowDays} days, or sooner if sell-through weakens further.`,
+      ),
+    ]
+  }
+
+  return {
+    decisionSummary,
+    decisionConfidence,
+    analysisPoints: [
+      inventoryPoint,
+      buildDemandAnalysisPoint(
+        input.snapshot,
+        input.base.demandStatus,
+        input.base.hasInsufficientDemandData,
+      ),
+      ...(noInventoryToClear
+        ? []
+        : [
+            buildPricingAnalysisPoint(
+              {
+                currencyCode: input.snapshot.currencyCode,
+                locale: input.snapshot.locale,
+                fallbackCurrency: input.fallbackCurrency,
+              },
+              input.pricing,
+            ),
+          ]),
+      decisionAnalysis,
+    ],
+    recommendedActions,
+    reviewWindowDays,
+    escalationTrigger,
+  }
+}
+
+const buildDiscountGuidance = (input: {
+  snapshot: ShopifyProductActionSnapshot
+  base: ProductActionDecisionBase
+  pricing: ProductActionPricingDecisionSupport
+  policy: ProductDecisionPolicy
+  fallbackCurrency: string
+  discountDecision: DiscountDecisionEvaluation["discountDecision"]
+}): ProductActionGuidance => {
+  const pricingDataGap = resolvePricingDataGap(input.pricing)
+  const priceFloor =
+    input.pricing.minimumAllowedUnitPrice !== null
+      ? formatSnapshotCurrency(
+          {
+            currencyCode: input.snapshot.currencyCode,
+            locale: input.snapshot.locale,
+            fallbackCurrency: input.fallbackCurrency,
+          },
+          input.pricing.minimumAllowedUnitPrice,
+        )
+      : null
+  const noInventoryToDiscount = input.snapshot.onHandUnits <= 0
+  const agedIntoClearanceReview =
+    input.discountDecision === "hold_price" &&
+    !noInventoryToDiscount &&
+    !input.base.hasInsufficientDemandData &&
+    input.base.demandStatus !== "healthy" &&
+    input.snapshot.inventoryDaysLeft >= input.policy.clearanceStrongSignalInventoryDays
+  const inventoryPoint = noInventoryToDiscount
+    ? "On-hand inventory is 0 units, so there is nothing available to discount."
+    : !Number.isFinite(input.snapshot.inventoryDaysLeft)
+      ? `Inventory cover is n/a (no recent sales detected), which is treated as already beyond the ${input.policy.discountMinInventoryDays}-day discount threshold and in aged-inventory territory.`
+      : input.snapshot.inventoryDaysLeft >= input.policy.clearanceStrongSignalInventoryDays
+        ? `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, far above the ${input.policy.discountMinInventoryDays}-day discount threshold and already in aged-inventory territory.`
+        : input.snapshot.inventoryDaysLeft >= input.policy.discountMinInventoryDays
+          ? `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, above the ${input.policy.discountMinInventoryDays}-day discount threshold.`
+          : `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, below the ${input.policy.discountMinInventoryDays}-day discount threshold.`
+
+  let decisionSummary: string
+  let decisionConfidence: ProductDecisionConfidence
+  let decisionAnalysis: string
+  let reviewWindowDays: number
+  let escalationTrigger: string | null
+  let recommendedActions: ProductDecisionAction[]
+
+  if (noInventoryToDiscount) {
+    decisionSummary = "No discount action is needed because the SKU has no on-hand inventory."
+    decisionConfidence = "high"
+    decisionAnalysis =
+      "There is no available stock to markdown, so discount pricing and promotional actions are unnecessary."
+    reviewWindowDays = 0
+    escalationTrigger = "Revisit discounting only if inventory becomes available again."
+    recommendedActions = [
+      productDecisionAction(
+        "ops",
+        "Keep the SKU out of markdown or discount queues until inventory becomes available again.",
+      ),
+      productDecisionAction(
+        "sales",
+        "Do not launch discount messaging or markdown placements while the SKU is unavailable.",
+      ),
+      productDecisionAction(
+        "pricing",
+        buildMissingPriceFloorAction({
+          pricing: input.pricing,
+          invalidMarginFloorText:
+            "If inventory returns and discounting is needed later, fix the configured gross-margin floor before setting a discount floor.",
+          missingCostAndSellingPriceText:
+            "If inventory returns and discounting is needed later, confirm both product cost and recent selling-price data before setting a discount floor.",
+          missingCostText:
+            "If inventory returns and discounting is needed later, confirm cost data before setting a discount floor.",
+          missingSellingPriceText:
+            "If inventory returns and discounting is needed later, confirm recent selling-price data before setting a discount floor.",
+          fallbackText: "No discount floor is needed unless inventory becomes available again.",
+        }),
+      ),
+      productDecisionAction(
+        "review",
+        "No discount follow-up is needed unless inventory becomes available again.",
+      ),
+    ]
+  } else if (input.discountDecision === "test_discount") {
+    decisionSummary = "Run a controlled discount test."
+    decisionConfidence = input.base.hasInsufficientDemandData ? "low" : "medium"
+    decisionAnalysis =
+      "Inventory is heavy enough and demand is weak enough to justify a measured price test, but the markdown should stay controlled."
+    reviewWindowDays = 7
+    escalationTrigger =
+      "If sell-through does not improve after the test window, move the SKU into clearance review."
+    recommendedActions = [
+      productDecisionAction(
+        "ops",
+        "Keep replenishment conservative while the discount test is running so inventory does not build further.",
+      ),
+      productDecisionAction(
+        "sales",
+        "Run a limited markdown test on this SKU rather than opening a deep or broad promotion immediately.",
+      ),
+      productDecisionAction(
+        "pricing",
+        priceFloor !== null
+          ? `Do not price below ${priceFloor}${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
+          : "Confirm cost data before setting the discount floor.",
+      ),
+      productDecisionAction(
+        "review",
+        `Review sell-through in ${reviewWindowDays} days and escalate only if the markdown does not improve movement.`,
+      ),
+    ]
+  } else if (input.discountDecision === "discount_blocked") {
+    decisionSummary = !input.pricing.hasValidMarginFloor
+      ? "Do not discount until the configured gross-margin floor is fixed."
+      : pricingDataGap === "missing_cost_and_selling_price"
+        ? "Do not discount until both product cost and recent selling-price data are available."
+        : pricingDataGap === "missing_cost"
+          ? "Do not discount until cost and margin guardrails are available."
+          : pricingDataGap === "missing_selling_price"
+            ? "Do not discount until recent selling-price data is available."
+            : input.pricing.hasMarginData
+              ? "Do not discount under the current margin constraints."
+              : "Do not discount until cost and margin guardrails are available."
+    decisionConfidence =
+      input.base.hasInsufficientDemandData || !input.pricing.hasMarginData ? "low" : "high"
+    decisionAnalysis = !input.pricing.hasValidMarginFloor
+      ? "The configured margin floor is not usable, so discount pricing guardrails are unavailable."
+      : pricingDataGap === "missing_cost_and_selling_price"
+        ? "Both product cost data and recent selling price data are missing, so discount pricing guardrails cannot be computed."
+        : pricingDataGap === "missing_cost"
+          ? "Current cost data is missing, so any discount would be speculative."
+          : pricingDataGap === "missing_selling_price"
+            ? "Recent selling price data is missing, so the margin impact of any discount cannot be evaluated yet."
+            : input.pricing.marginAtOrBelowFloor
+              ? "Current margin is already at or below the configured floor, so discounting would erode the required guardrail."
+              : "Current economics do not support a safe discount at this time."
+    reviewWindowDays = 14
+    escalationTrigger =
+      pricingDataGap === "missing_cost"
+        ? "Revisit discounting once product cost data is available."
+        : pricingDataGap === "missing_cost_and_selling_price"
+          ? "Revisit discounting once both product cost and recent selling-price data are available."
+          : pricingDataGap === "missing_selling_price"
+            ? "Revisit discounting once recent selling-price data is available."
+            : "Revisit discounting if margin improves or the SKU ages into a clearance case."
+    recommendedActions = [
+      productDecisionAction(
+        "ops",
+        "Hold standard pricing until the margin constraint is resolved.",
+      ),
+      productDecisionAction(
+        "sales",
+        "Avoid leaning on discount-led sell-through for this SKU until the pricing guardrails are clear.",
+      ),
+      productDecisionAction(
+        "pricing",
+        !input.pricing.hasValidMarginFloor
+          ? "Fix the configured gross-margin floor before attempting a discount test."
+          : pricingDataGap === "missing_cost_and_selling_price"
+            ? "Populate both product cost and recent selling-price data before testing a discount."
+            : pricingDataGap === "missing_cost"
+              ? "Populate product cost data before testing a discount."
+              : pricingDataGap === "missing_selling_price"
+                ? "Populate recent selling-price data before testing a discount."
+                : input.pricing.marginAtOrBelowFloor
+                  ? "Raise price or wait for cost improvements before discounting."
+                  : "Confirm economics before introducing any markdown.",
+      ),
+      productDecisionAction(
+        "review",
+        `Reassess within ${reviewWindowDays} days, or sooner once the margin constraint is resolved.`,
+      ),
+    ]
+  } else {
+    decisionSummary = agedIntoClearanceReview
+      ? "Do not open a standard discount test; move this SKU into clearance review."
+      : "Keep price unchanged for now."
+    decisionConfidence =
+      input.base.hasInsufficientDemandData ||
+      (input.base.demandStatus !== "healthy" &&
+        input.snapshot.inventoryDaysLeft >= input.policy.discountMinInventoryDays)
+        ? "medium"
+        : "high"
+    decisionAnalysis = agedIntoClearanceReview
+      ? "Inventory has already aged past the normal discount window, so the next pricing review should be handled as a clearance case rather than standard discounting."
+      : "Current demand and inventory conditions do not justify opening a discount test right now."
+    reviewWindowDays = input.base.hasInsufficientDemandData ? 14 : agedIntoClearanceReview ? 7 : 21
+    escalationTrigger = agedIntoClearanceReview
+      ? "Start a clearance review now and escalate to an active clearance move if sell-through stays weak."
+      : "Revisit discounting if inventory cover keeps rising and demand weakens further."
+    recommendedActions = [
+      productDecisionAction(
+        "ops",
+        agedIntoClearanceReview
+          ? "Hold off on fresh discount testing and move the SKU onto the clearance review queue."
+          : "Leave the SKU on standard pricing for now.",
+      ),
+      productDecisionAction(
+        "sales",
+        agedIntoClearanceReview
+          ? "Plan the next commercial move as a clearance review, using clearance placement or liquidation levers instead of normal merchandising."
+          : "Use standard merchandising rather than a markdown until a clearer discount case emerges.",
+      ),
+      productDecisionAction(
+        "pricing",
+        agedIntoClearanceReview
+          ? priceFloor !== null
+            ? `Use ${priceFloor} as the minimum price if the SKU moves into clearance.`
+            : buildMissingPriceFloorAction({
+                pricing: input.pricing,
+                invalidMarginFloorText:
+                  "Fix the configured gross-margin floor before setting a clearance floor.",
+                missingCostAndSellingPriceText:
+                  "Confirm both product cost and recent selling-price data before setting a clearance floor.",
+                missingCostText: "Confirm cost data before setting a clearance floor.",
+                missingSellingPriceText:
+                  "Confirm recent selling-price data before setting a clearance floor.",
+                fallbackText: "Confirm pricing guardrails before setting a clearance floor.",
+              })
+          : priceFloor !== null
+            ? `If you later test a discount, keep price at or above ${priceFloor}.`
+            : buildMissingPriceFloorAction({
+                pricing: input.pricing,
+                invalidMarginFloorText:
+                  "Fix the configured gross-margin floor before setting any future discount floor.",
+                missingCostAndSellingPriceText:
+                  "Confirm both product cost and recent selling-price data before setting any future discount floor.",
+                missingCostText: "Confirm cost data before setting any future discount floor.",
+                missingSellingPriceText:
+                  "Confirm recent selling-price data before setting any future discount floor.",
+                fallbackText:
+                  "Confirm pricing guardrails before setting any future discount floor.",
+              }),
+      ),
+      productDecisionAction(
+        "review",
+        agedIntoClearanceReview
+          ? `Complete the clearance review within ${reviewWindowDays} days and escalate if inventory still barely moves.`
+          : `Reassess within ${reviewWindowDays} days, or sooner if inventory cover rises further.`,
+      ),
+    ]
+  }
+
+  return {
+    decisionSummary,
+    decisionConfidence,
+    analysisPoints: [
+      inventoryPoint,
+      buildDemandAnalysisPoint(
+        input.snapshot,
+        input.base.demandStatus,
+        input.base.hasInsufficientDemandData,
+      ),
+      ...(noInventoryToDiscount
+        ? []
+        : [
+            buildPricingAnalysisPoint(
+              {
+                currencyCode: input.snapshot.currencyCode,
+                locale: input.snapshot.locale,
+                fallbackCurrency: input.fallbackCurrency,
+              },
+              input.pricing,
+            ),
+          ]),
+      decisionAnalysis,
+    ],
+    recommendedActions,
+    reviewWindowDays,
+    escalationTrigger,
   }
 }
 
@@ -1729,6 +2382,7 @@ export const evaluateDiscountDecision = (input: {
   snapshot: ShopifyProductActionSnapshot
   marginFloorPct?: number
   policy?: ProductDecisionPolicy
+  fallbackCurrency?: string
 }): DiscountDecisionEvaluation => {
   const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const base = buildProductActionDecisionBase({
@@ -1743,49 +2397,60 @@ export const evaluateDiscountDecision = (input: {
   let discountDecision: DiscountDecisionEvaluation["discountDecision"]
   let discountReason: string
 
-  if (input.snapshot.inventoryDaysLeft < policy.discountMinInventoryDays) {
+  if (input.snapshot.onHandUnits <= 0) {
     discountDecision = "hold_price"
-    discountReason = `hold_price because inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days.`
+    discountReason = "There is no on-hand inventory left to discount."
+  } else if (input.snapshot.inventoryDaysLeft < policy.discountMinInventoryDays) {
+    discountDecision = "hold_price"
+    discountReason = `Inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, so a discount test is not justified yet.`
   } else if (base.demandStatus === "healthy") {
     discountDecision = "hold_price"
-    discountReason = "hold_price because demand is healthy enough that discounting is not needed."
+    discountReason = "Demand is healthy enough that discounting is not needed."
   } else if (base.demandStatus === "insufficient_data") {
     discountDecision = "hold_price"
-    discountReason =
-      "hold_price because recent demand data is insufficient, so discount testing would be premature."
+    discountReason = "Recent demand data is still thin, so discount testing would be premature."
   } else if (input.snapshot.inventoryDaysLeft >= policy.clearanceStrongSignalInventoryDays) {
     discountDecision = "hold_price"
     discountReason =
-      "hold_price because this SKU is better handled as a clearance review than a standard discount test."
+      "This SKU is better handled as a clearance review than a standard discount test."
   } else if (base.demandStatus === "weak") {
     if (!pricing.hasValidMarginFloor) {
       discountDecision = "discount_blocked"
-      discountReason = `discount_blocked because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy with a finite selling price.`
+      discountReason = `The configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy with a finite selling price.`
     } else if (!pricing.hasMarginData) {
       discountDecision = "discount_blocked"
-      discountReason = "discount_blocked because current margin is unavailable."
+      discountReason = "Current margin is unavailable."
     } else if ((pricing.currentMarginPct ?? 0) <= 0) {
       discountDecision = "discount_blocked"
-      discountReason =
-        "discount_blocked because the current selling price is already at or below unit cost."
+      discountReason = "The current selling price is already at or below unit cost."
     } else if (pricing.marginAtOrBelowFloor) {
       discountDecision = "discount_blocked"
-      discountReason = `discount_blocked because current margin is at or below the configured ${pricing.marginFloorPct?.toFixed(1)}% floor.`
+      discountReason = `Current margin is at or below the configured ${pricing.marginFloorPct?.toFixed(1)}% floor.`
     } else {
       discountDecision = "test_discount"
       discountReason =
         pricing.marginFloorPct !== null
-          ? `test_discount because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, demand is weak, and margin remains above the configured floor.`
-          : `test_discount because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, demand is weak, and margin data is available for a controlled discount test.`
+          ? `Inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, demand is weak, and margin remains above the configured floor.`
+          : `Inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, demand is weak, and margin data supports a controlled discount test.`
     }
   } else {
     discountDecision = "hold_price"
-    discountReason = "hold_price because demand is not weak enough to justify discounting."
+    discountReason = "Demand is not weak enough to justify discounting."
   }
+
+  const guidance = buildDiscountGuidance({
+    snapshot: input.snapshot,
+    base,
+    pricing,
+    policy,
+    fallbackCurrency: input.fallbackCurrency ?? DEFAULT_PLUGIN_CONFIG.currency,
+    discountDecision,
+  })
 
   return {
     ...base,
     ...pricing,
+    ...guidance,
     discountDecision,
     discountReason,
   }
@@ -1796,6 +2461,7 @@ export const evaluateClearanceDecision = (input: {
   snapshot: ShopifyProductActionSnapshot
   marginFloorPct?: number
   policy?: ProductDecisionPolicy
+  fallbackCurrency?: string
 }): ClearanceDecisionEvaluation => {
   const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
   const base = buildProductActionDecisionBase({
@@ -1812,13 +2478,13 @@ export const evaluateClearanceDecision = (input: {
 
   if (input.snapshot.onHandUnits <= 0) {
     clearanceDecision = "not_clearance_candidate"
-    clearanceReason = "not_clearance_candidate because there is no on-hand inventory left to clear."
+    clearanceReason = "There is no on-hand inventory left to clear."
   } else if (input.snapshot.inventoryDaysLeft < policy.clearanceMinInventoryDays) {
     clearanceDecision = "not_clearance_candidate"
-    clearanceReason = `not_clearance_candidate because inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days.`
+    clearanceReason = `Inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, so clearance is premature.`
   } else if (base.demandStatus === "healthy") {
     clearanceDecision = "not_clearance_candidate"
-    clearanceReason = "not_clearance_candidate because demand remains healthy."
+    clearanceReason = "Demand remains healthy."
   } else if (
     input.snapshot.inventoryDaysLeft >= policy.clearanceStrongSignalInventoryDays &&
     base.demandStatus === "weak" &&
@@ -1826,18 +2492,18 @@ export const evaluateClearanceDecision = (input: {
   ) {
     clearanceDecision = "clear_inventory"
     clearanceReason = !pricing.hasValidMarginFloor
-      ? `clear_inventory because inventory cover is very high and recent sales are minimal, but clearance pricing guidance is unavailable because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy.`
+      ? `Inventory cover is very high and recent sales are minimal, but clearance pricing guidance is unavailable because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy.`
       : !pricing.hasMarginData
-        ? "clear_inventory because inventory cover is very high and recent sales are minimal, but pricing guidance is unavailable because margin data is missing."
+        ? "Inventory cover is very high and recent sales are minimal, but pricing guidance is unavailable because margin data is missing."
         : pricing.marginAtOrBelowFloor
-          ? `clear_inventory because inventory cover is very high and recent sales are minimal, but clearance pricing should stay above the configured ${pricing.marginFloorPct?.toFixed(1)}% margin floor.`
-          : "clear_inventory because inventory cover is very high and recent sales are minimal."
+          ? `Inventory cover is very high and recent sales are minimal, but clearance pricing should stay above the configured ${pricing.marginFloorPct?.toFixed(1)}% margin floor.`
+          : "Inventory cover is very high and recent sales are minimal."
   } else if (base.demandStatus === "weak" || base.demandStatus === "insufficient_data") {
     clearanceDecision = "review_for_clearance"
     const clearanceBaseReason =
       base.demandStatus === "insufficient_data"
-        ? "review_for_clearance because inventory is aging, but recent demand data is not reliable enough for an immediate clearance decision."
-        : `review_for_clearance because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days and demand is weak.`
+        ? "Inventory is aging, but recent demand data is not reliable enough for an immediate clearance decision."
+        : `Inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days and demand is weak.`
     clearanceReason = !pricing.hasValidMarginFloor
       ? `${clearanceBaseReason} Clearance pricing guidance is unavailable because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy.`
       : !pricing.hasMarginData
@@ -1847,13 +2513,22 @@ export const evaluateClearanceDecision = (input: {
           : clearanceBaseReason
   } else {
     clearanceDecision = "not_clearance_candidate"
-    clearanceReason =
-      "not_clearance_candidate because demand is not weak enough to justify clearance."
+    clearanceReason = "Demand is not weak enough to justify clearance."
   }
+
+  const guidance = buildClearanceGuidance({
+    snapshot: input.snapshot,
+    base,
+    pricing,
+    policy,
+    fallbackCurrency: input.fallbackCurrency ?? DEFAULT_PLUGIN_CONFIG.currency,
+    clearanceDecision,
+  })
 
   return {
     ...base,
     ...pricing,
+    ...guidance,
     clearanceReason,
     clearanceDecision,
   }

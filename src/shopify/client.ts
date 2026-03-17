@@ -1,7 +1,7 @@
 import { createAdminApiClient } from "@shopify/admin-api-client"
-import type { ShopifyGraphQLClient } from "./types.js"
-import type { ShopifyStoreConfig } from "../config.js"
-import { toArray } from "../utils.js"
+import type { ShopifyGraphQLClient } from "./types.ts"
+import type { ShopifyStoreConfig } from "../config.ts"
+import { toArray } from "../utils.ts"
 
 declare const process: {
   env: Record<string, string | undefined>

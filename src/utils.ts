@@ -1,5 +1,5 @@
 import type { AgentToolResult } from "@mariozechner/pi-agent-core"
-import { DEFAULT_PLUGIN_CONFIG } from "./config.js"
+import { DEFAULT_PLUGIN_CONFIG } from "./config.ts"
 
 /** Formats a numeric percentage with one decimal place. */
 export const percentage = (value: number) => `${value.toFixed(1)}%`
@@ -81,6 +81,12 @@ export const sum = (values: number[]) => values.reduce((total, value) => total +
 export const textResult = (text: string): AgentToolResult<unknown> => ({
   content: [{ type: "text", text }],
   details: null,
+})
+
+/** Wraps plain text plus structured details as an OpenClaw text tool result. */
+export const textResultWithDetails = <T>(text: string, details: T): AgentToolResult<T> => ({
+  content: [{ type: "text", text }],
+  details,
 })
 
 export type NeedsInputToolDetails = {

@@ -5,7 +5,7 @@ import {
   findConfiguredStore,
   getStoreOperationNumber,
   type PluginConfig,
-} from "./config.js"
+} from "./config.ts"
 import {
   evaluateClearanceDecision,
   evaluateDiscountDecision,
@@ -16,6 +16,8 @@ import {
   loadShopifyStoreOverview,
   type ClearanceDecisionEvaluation,
   type DiscountDecisionEvaluation,
+  type ProductDecisionAction,
+  type ProductDecisionConfidence,
   type ProductDecisionDemandStatus,
   type ReplenishmentDecisionEvaluation,
   type ShopifyInventorySnapshot,
@@ -24,7 +26,7 @@ import {
   type ShopifyStoreOverviewSnapshot,
   type StoreOverviewRangePreset,
   loadShopifySalesSnapshot,
-} from "./services/shopify.js"
+} from "./services/shopify.ts"
 import {
   currency,
   formatDateTime,
@@ -34,8 +36,9 @@ import {
   optionalNumber,
   percentage,
   textResult,
+  textResultWithDetails,
   toNumber,
-} from "./utils.js"
+} from "./utils.ts"
 
 const StoreOverviewRangePresetSchema = Type.Union([
   Type.Literal("today"),
@@ -301,16 +304,8 @@ const formatInventoryCover = (value: number) =>
 const formatMarginValue = (value: number | null) =>
   typeof value === "number" ? percentage(value) : "unavailable"
 
-const formatMarginFloorValue = (value: number | null, hasValidMarginFloor: boolean) => {
-  if (typeof value !== "number") {
-    return "unavailable"
-  }
-  return hasValidMarginFloor
-    ? percentage(value)
-    : `invalid (${percentage(value)} is not achievable as a gross margin floor)`
-}
-
-const formatDemandStatus = (value: ProductDecisionDemandStatus) => value
+const formatDemandStatus = (value: ProductDecisionDemandStatus) =>
+  value === "insufficient_data" ? "insufficient data" : value
 
 const formatProductActionInvalidInputPrompt = (invalidParameters: string[]) => {
   if (
@@ -445,51 +440,248 @@ const formatProductDecisionHeader = (input: {
   `Inventory cover: ${formatInventoryCover(input.inventoryDaysLeft)}`,
 ]
 
-const formatDiscountGuidance = (
+const PRODUCT_DECISION_SECTION_ORDER = [
+  "current_situation",
+  "analysis",
+  "recommended_actions",
+  "conclusion",
+] as const
+
+export type ProductDecisionSectionKey = (typeof PRODUCT_DECISION_SECTION_ORDER)[number]
+
+export type StructuredProductDecisionFacts = {
+  storeName: string
+  productName: string
+  sku: string
+  lookbackDays: number
+  dailySalesUnits: number
+  demandStatus: ProductDecisionDemandStatus
+  unitsSold: number
+  onHandUnits: number
+  inventoryDaysLeft: number | null
+  inventoryCoverText: string
+  averageUnitPrice: number
+  currencyCode: string
+  currentMarginPct: number | null
+  marginFloorPct: number | null
+  minimumAllowedUnitPrice: number | null
+}
+
+export type StructuredProductDecisionDetails = {
+  status: "ok"
+  toolName: "seller_discount_decision" | "seller_clearance_decision"
+  decisionType: "discount" | "clearance"
+  presentation: {
+    sectionOrder: ProductDecisionSectionKey[]
+    localizeSectionTitles: true
+  }
+  facts: StructuredProductDecisionFacts
+  analysisPoints: string[]
+  recommendedActions: ProductDecisionAction[]
+  decision: {
+    key:
+      | DiscountDecisionEvaluation["discountDecision"]
+      | ClearanceDecisionEvaluation["clearanceDecision"]
+    summary: string
+    reason: string
+    confidence: ProductDecisionConfidence
+    reviewWindowDays: number
+    escalationTrigger: string | null
+  }
+}
+
+const formatDecisionAction = (input: ProductDecisionAction) => {
+  const ownerLabels = {
+    ops: "ops",
+    sales: "sales",
+    pricing: "pricing",
+    review: "review",
+  } satisfies Record<ProductDecisionAction["owner"], string>
+
+  return `${ownerLabels[input.owner]}: ${input.text}`
+}
+
+const formatDiscountDecisionHeadline = (input: DiscountDecisionEvaluation) => {
+  const productSummary = `${input.productName} (${input.sku})`
+  if (input.discountDecision === "test_discount") {
+    return `Test discount for ${productSummary}.`
+  }
+  if (input.discountDecision === "discount_blocked") {
+    return `Discount blocked for ${productSummary}.`
+  }
+  if (input.onHandUnits <= 0) {
+    return `No discount action is needed for ${productSummary}.`
+  }
+
+  const routesToClearanceReview =
+    input.decisionSummary.toLowerCase().includes("clearance review") ||
+    input.discountReason.toLowerCase().includes("clearance review")
+  if (routesToClearanceReview) {
+    return `Start clearance review for ${productSummary}.`
+  }
+
+  return `Hold price for ${productSummary}.`
+}
+
+const formatClearanceDecisionLabel = (value: ClearanceDecisionEvaluation["clearanceDecision"]) => {
+  if (value === "clear_inventory") {
+    return "Clear inventory"
+  }
+  if (value === "review_for_clearance") {
+    return "Review for clearance"
+  }
+  return "Not a clearance candidate"
+}
+
+const buildStructuredProductDecisionFacts = (
+  input: {
+    storeName: string
+    productName: string
+    sku: string
+    lookbackDays: number
+    dailySalesUnits: number
+    demandStatus: ProductDecisionDemandStatus
+    unitsSold: number
+    onHandUnits: number
+    inventoryDaysLeft: number
+    averageUnitPrice: number
+    currentMarginPct: number | null
+    marginFloorPct: number | null
+    hasValidMarginFloor: boolean
+    minimumAllowedUnitPrice: number | null
+    currencyCode: string | null
+  },
+  options: { locale: string; fallbackCurrency: string },
+): StructuredProductDecisionFacts => ({
+  storeName: input.storeName,
+  productName: input.productName,
+  sku: input.sku,
+  lookbackDays: input.lookbackDays,
+  dailySalesUnits: input.dailySalesUnits,
+  demandStatus: input.demandStatus,
+  unitsSold: input.unitsSold,
+  onHandUnits: input.onHandUnits,
+  inventoryDaysLeft: Number.isFinite(input.inventoryDaysLeft) ? input.inventoryDaysLeft : null,
+  inventoryCoverText: formatInventoryCover(input.inventoryDaysLeft),
+  averageUnitPrice: input.averageUnitPrice,
+  currencyCode: input.currencyCode ?? options.fallbackCurrency,
+  currentMarginPct: input.currentMarginPct,
+  marginFloorPct: input.marginFloorPct,
+  minimumAllowedUnitPrice: input.minimumAllowedUnitPrice,
+})
+
+const formatProductDecisionFactsFallback = (
+  input: StructuredProductDecisionFacts,
+  options: { locale: string },
+) => {
+  const averagePriceSentence =
+    input.averageUnitPrice > 0
+      ? ` Average price is ${currency(input.averageUnitPrice, input.currencyCode, options.locale)}.`
+      : ""
+  const marginSentence =
+    input.currentMarginPct !== null
+      ? ` Current margin is ${formatMarginValue(input.currentMarginPct)}.`
+      : ""
+  const floorSentence =
+    input.minimumAllowedUnitPrice !== null
+      ? ` Cost-aware floor is ${currency(input.minimumAllowedUnitPrice, input.currencyCode, options.locale)}.`
+      : ""
+
+  return `Store ${input.storeName}: ${input.productName} (${input.sku}) sold ${Math.round(input.unitsSold)} units in the last ${input.lookbackDays} days, with ${Math.round(input.onHandUnits)} units on hand and ${input.inventoryCoverText} of inventory cover.${averagePriceSentence}${marginSentence}${floorSentence}`
+}
+
+const formatRecommendedActionsFallback = (actions: ProductDecisionAction[]) =>
+  actions.map(formatDecisionAction).join(" ")
+
+export const buildDiscountDecisionToolDetails = (
+  input: DiscountDecisionEvaluation,
+  options: { locale: string; fallbackCurrency: string },
+): StructuredProductDecisionDetails => ({
+  status: "ok",
+  toolName: "seller_discount_decision",
+  decisionType: "discount",
+  presentation: {
+    sectionOrder: [...PRODUCT_DECISION_SECTION_ORDER],
+    localizeSectionTitles: true,
+  },
+  facts: buildStructuredProductDecisionFacts(input, options),
+  analysisPoints: [...input.analysisPoints],
+  recommendedActions: [...input.recommendedActions],
+  decision: {
+    key: input.discountDecision,
+    summary: input.decisionSummary,
+    reason: input.discountReason,
+    confidence: input.decisionConfidence,
+    reviewWindowDays: input.reviewWindowDays,
+    escalationTrigger: input.escalationTrigger,
+  },
+})
+
+export const buildClearanceDecisionToolDetails = (
+  input: ClearanceDecisionEvaluation,
+  options: { locale: string; fallbackCurrency: string },
+): StructuredProductDecisionDetails => ({
+  status: "ok",
+  toolName: "seller_clearance_decision",
+  decisionType: "clearance",
+  presentation: {
+    sectionOrder: [...PRODUCT_DECISION_SECTION_ORDER],
+    localizeSectionTitles: true,
+  },
+  facts: buildStructuredProductDecisionFacts(input, options),
+  analysisPoints: [...input.analysisPoints],
+  recommendedActions: [...input.recommendedActions],
+  decision: {
+    key: input.clearanceDecision,
+    summary: input.decisionSummary,
+    reason: input.clearanceReason,
+    confidence: input.decisionConfidence,
+    reviewWindowDays: input.reviewWindowDays,
+    escalationTrigger: input.escalationTrigger,
+  },
+})
+
+export const formatStructuredProductDecisionDataBlock = (
+  details: StructuredProductDecisionDetails,
+) =>
+  [
+    "Structured decision data (for agent use only; do not quote raw JSON in the final answer):",
+    "```json",
+    JSON.stringify(details, null, 2),
+    "```",
+  ].join("\n")
+
+export const formatProductDecisionToolContent = (
+  fallbackText: string,
+  details: StructuredProductDecisionDetails,
+) => [fallbackText, "", formatStructuredProductDecisionDataBlock(details)].join("\n")
+
+export const formatDiscountDecisionFallback = (
   input: DiscountDecisionEvaluation,
   options: { locale: string; fallbackCurrency: string },
 ) => {
-  if (
-    input.discountDecision !== "test_discount" ||
-    input.minimumAllowedUnitPrice === null ||
-    input.maximumDiscountPctFromAveragePrice === null
-  ) {
-    return ""
-  }
-  return ` Do not price below ${currency(input.minimumAllowedUnitPrice, input.currencyCode ?? options.fallbackCurrency, options.locale)} per unit${input.maximumDiscountPctFromAveragePrice > 0 ? ` (about ${input.maximumDiscountPctFromAveragePrice.toFixed(1)}% below the current average price)` : ""}.`
+  const facts = buildStructuredProductDecisionFacts(input, options)
+  return [
+    formatDiscountDecisionHeadline(input),
+    formatProductDecisionFactsFallback(facts, { locale: options.locale }),
+    input.decisionSummary,
+    `Reason: ${input.discountReason}`,
+    `Next steps: ${formatRecommendedActionsFallback(input.recommendedActions)}`,
+  ].join(" ")
 }
 
-const formatClearanceGuidance = (
+export const formatClearanceDecisionFallback = (
   input: ClearanceDecisionEvaluation,
   options: { locale: string; fallbackCurrency: string },
 ) => {
-  if (
-    (input.clearanceDecision !== "clear_inventory" &&
-      input.clearanceDecision !== "review_for_clearance") ||
-    input.minimumAllowedUnitPrice === null
-  ) {
-    return ""
-  }
-  const priceText = currency(
-    input.minimumAllowedUnitPrice,
-    input.currencyCode ?? options.fallbackCurrency,
-    options.locale,
-  )
-  const discountText =
-    input.maximumDiscountPctFromAveragePrice !== null &&
-    input.maximumDiscountPctFromAveragePrice > 0
-      ? ` (about ${input.maximumDiscountPctFromAveragePrice.toFixed(1)}% below the current average price)`
-      : ""
-  if (input.clearanceDecision === "clear_inventory") {
-    return ` Use ${priceText} per unit as the clearance floor${discountText}.`
-  }
-  if (
-    input.clearanceReason.includes("pricing guidance is unavailable") ||
-    input.clearanceReason.includes("pricing should stay above")
-  ) {
-    return ""
-  }
-  return ` Any clearance pricing should stay above ${priceText} per unit${discountText}.`
+  const facts = buildStructuredProductDecisionFacts(input, options)
+  return [
+    `${formatClearanceDecisionLabel(input.clearanceDecision)} for ${input.productName} (${input.sku}).`,
+    formatProductDecisionFactsFallback(facts, { locale: options.locale }),
+    input.decisionSummary,
+    `Reason: ${input.clearanceReason}`,
+    `Next steps: ${formatRecommendedActionsFallback(input.recommendedActions)}`,
+  ].join(" ")
 }
 
 const formatReplenishmentDecision = (input: ReplenishmentDecisionEvaluation) =>
@@ -499,34 +691,6 @@ const formatReplenishmentDecision = (input: ReplenishmentDecisionEvaluation) =>
     `Recommended reorder quantity: ${Math.round(input.recommendedReorderUnits)}`,
     "",
     `Replenishment: ${input.replenishmentReason}`,
-  ].join("\n")
-
-const formatDiscountDecision = (
-  input: DiscountDecisionEvaluation,
-  options: { locale: string; fallbackCurrency: string },
-) =>
-  [
-    ...formatProductDecisionHeader(input),
-    input.currentMarginPct === null
-      ? "Current margin: unavailable"
-      : `Current margin: ${formatMarginValue(input.currentMarginPct)}`,
-    `Margin floor: ${formatMarginFloorValue(input.marginFloorPct, input.hasValidMarginFloor)}`,
-    "",
-    `Discount: ${input.discountReason}${formatDiscountGuidance(input, options)}`,
-  ].join("\n")
-
-const formatClearanceDecision = (
-  input: ClearanceDecisionEvaluation,
-  options: { locale: string; fallbackCurrency: string },
-) =>
-  [
-    ...formatProductDecisionHeader(input),
-    input.currentMarginPct === null
-      ? "Current margin: unavailable"
-      : `Current margin: ${formatMarginValue(input.currentMarginPct)}`,
-    `Margin floor: ${formatMarginFloorValue(input.marginFloorPct, input.hasValidMarginFloor)}`,
-    "",
-    `Clearance: ${input.clearanceReason}${formatClearanceGuidance(input, options)}`,
   ].join("\n")
 
 const formatStoreOverview = (input: ShopifyStoreOverviewSnapshot, options: { locale: string }) => {
@@ -957,13 +1121,21 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         snapshot: snapshot.value,
         marginFloorPct: pluginConfig.targetMarginFloorPct,
         policy: pluginConfig.decisionPolicy,
+        fallbackCurrency: pluginConfig.currency,
       })
 
-      return textResult(
-        formatDiscountDecision(evaluation, {
-          locale: pluginConfig.locale,
-          fallbackCurrency: pluginConfig.currency,
-        }),
+      const formatOptions = {
+        locale: pluginConfig.locale,
+        fallbackCurrency: pluginConfig.currency,
+      }
+      const details = buildDiscountDecisionToolDetails(evaluation, formatOptions)
+
+      return textResultWithDetails(
+        formatProductDecisionToolContent(
+          formatDiscountDecisionFallback(evaluation, formatOptions),
+          details,
+        ),
+        details,
       )
     },
   })
@@ -1005,13 +1177,21 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         snapshot: snapshot.value,
         marginFloorPct: pluginConfig.targetMarginFloorPct,
         policy: pluginConfig.decisionPolicy,
+        fallbackCurrency: pluginConfig.currency,
       })
 
-      return textResult(
-        formatClearanceDecision(evaluation, {
-          locale: pluginConfig.locale,
-          fallbackCurrency: pluginConfig.currency,
-        }),
+      const formatOptions = {
+        locale: pluginConfig.locale,
+        fallbackCurrency: pluginConfig.currency,
+      }
+      const details = buildClearanceDecisionToolDetails(evaluation, formatOptions)
+
+      return textResultWithDetails(
+        formatProductDecisionToolContent(
+          formatClearanceDecisionFallback(evaluation, formatOptions),
+          details,
+        ),
+        details,
       )
     },
   })

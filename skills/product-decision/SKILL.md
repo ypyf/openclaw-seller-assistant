@@ -1,21 +1,35 @@
 ---
 name: "product-decision"
-description: "Decide whether a product should be replenished, discounted, or cleared with the focused seller decision tools. Use when the user asks what action to take on one product's inventory or pricing."
+description: "Choose replenishment, discount, or clearance guidance for one product. Use when the user asks what action to take on that product's inventory or pricing."
 ---
 
 # Product Decision
 
-Use the focused decision tool that matches the user's ask.
+Use the decision tool that matches the user's ask.
 
-Rules:
+Tool selection:
 
-- For restock / reorder questions, call `seller_replenishment_decision`.
-- For markdown / discount questions, call `seller_discount_decision`.
-- For clearance / liquidation questions, call `seller_clearance_decision`.
-- For combined questions, call each relevant tool for the same product/store/lookback and aggregate the results into one answer.
-- If only one tool is called, keep its output as the final answer shape.
-- If a combined question triggers an ambiguity prompt from any tool, stop and ask the user to disambiguate before calling the others.
-- If `seller_replenishment_decision` asks for missing lead-time inputs, keep any ready discount / clearance results and ask the user for the missing replenishment inputs instead of discarding the ready guidance.
-- Preserve each tool's decision sentence when aggregating. Do not invent additional operational logic that the tools did not provide.
+- Restock / reorder -> `seller_replenishment_decision`
+- Markdown / discount -> `seller_discount_decision`
+- Clearance / liquidation -> `seller_clearance_decision`
+- Combined asks -> call each relevant tool for the same product, store, and lookback, then merge the results
+
+Answer shape:
+
+- Preserve each tool's decision sentence and numeric facts.
+- Present current-state facts separately from analysis.
+- If a discount or clearance tool includes a `Structured decision data` block in its content, prefer that block over the fallback prose and turn it into natural-language guidance. Do not echo the raw block.
+- Write a concise operator-facing answer in the user's language with natural section headings.
+- For single-tool answers, use this order: current situation, analysis, recommended actions, conclusion.
+- Make recommended actions concrete. Include pricing guardrails, review cadence, or escalation triggers when provided.
+
+If blocked:
+
+- If any tool returns an ambiguity prompt for a combined question, ask the user to clarify before continuing.
+- If `seller_replenishment_decision` needs lead-time inputs, keep any ready discount / clearance guidance and ask only for the missing replenishment inputs.
+
+Boundaries:
+
+- Base the answer only on tool-provided decisions and facts.
 - Do not add ad-spend, traffic, or promotion speculation.
 - Do not turn the answer into a campaign plan.
