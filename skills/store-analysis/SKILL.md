@@ -1,6 +1,6 @@
 ---
 name: "store-analysis"
-description: "Analyze store-level sales performance with seller_store_overview when the user asks for diagnosis, judgment, risk review, change analysis, or next-step advice."
+description: "Analyze store-level sales performance with seller_analytics when the user asks for diagnosis, judgment, risk review, change analysis, or next-step advice."
 ---
 
 # Store Analysis
@@ -9,15 +9,15 @@ Use this skill when the user wants analysis or next-step advice about store-leve
 
 Route by intent:
 
-- For single-period diagnosis requests such as "how does this look", "is this normal", "what's the problem", or "what should we do next", call `seller_store_overview` in single-window mode with `rangePreset` or `startDate` and `endDate`, then give a short analysis.
-- For comparison-based diagnosis requests that can be expressed as supported standard windows without creating a misleading overlap, such as "how does today compare with yesterday?", call `seller_store_overview` with `windows` first, then analyze the returned facts.
-- For comparison-based diagnosis requests that need explicit non-overlapping periods, such as comparisons between two custom date ranges or calendar periods that are not directly represented by the standard `windows`, call `seller_store_overview` separately for each period with `startDate` and `endDate`, then compare the results in your analysis.
+- For single-period diagnosis requests such as "how does this look", "is this normal", "what's the problem", or "what should we do next", call `seller_analytics` with `resource: "store_sales"` and `operation: "overview"`, then use `rangePreset` or `startDate` and `endDate`.
+- For comparison-based diagnosis requests that can be expressed as supported standard windows without creating a misleading overlap, such as "how does today compare with yesterday?", call `seller_analytics` with `resource: "store_sales"` and `operation: "summary"` plus `windows`, then analyze the returned facts.
+- For comparison-based diagnosis requests that need explicit non-overlapping periods, such as comparisons between two custom date ranges or calendar periods that are not directly represented by the standard `windows`, call `seller_analytics` separately for each period with `resource: "store_sales"`, `operation: "overview"`, `startDate`, and `endDate`, then compare the results in your analysis.
 
 Rules:
 
 - Always set `timeBasis`. Default to `timeBasis: "caller"` with `callerTimeZone`; switch to `timeBasis: "store"` only when the user explicitly wants the store-local calendar.
-- Relative windows use `rangePreset` or `windows`. Explicit calendar dates use `startDate` and `endDate`.
-- Do not call `seller_sales_query` for store-total questions. That tool is product-level only.
+- Use `operation: "overview"` for `rangePreset` or explicit dates. Use `operation: "summary"` for `windows`.
+- Do not call `seller_orders` for store-total questions. Its sales-reporting capability is product-level only; use `seller_analytics` for store totals.
 - Do not treat overlapping rolling windows as a clean baseline for change analysis. For example, do not judge `today` against `last_7_days` as if the 7-day window excludes today.
 - If the user names a calendar comparison period but does not provide dates and the period is not directly representable by supported presets, ask for exact dates instead of silently remapping it.
 - Do not invent traffic, conversion, ad-spend, or marketing-attribution data if the tool does not provide them.

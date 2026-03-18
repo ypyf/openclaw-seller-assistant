@@ -23,6 +23,7 @@ TypeScript project using Node.js.
 - Write tests for new features
 - Update tests when behavior changes
 - Use descriptive test names
+- Prefer asserting the current supported contract. Do not add tests whose main purpose is to assert that removed or nonexistent things do not exist.
 
 ## Rules for Agents
 

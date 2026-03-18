@@ -1,52 +1,104 @@
 import {
+  SHOPIFY_CATALOG_PRODUCTS_QUERY,
+  SHOPIFY_CATALOG_VARIANTS_QUERY,
+  SHOPIFY_DRAFT_ORDERS_QUERY,
+  SHOPIFY_DRAFT_ORDER_COMPLETE_MUTATION,
+  SHOPIFY_DRAFT_ORDER_CREATE_MUTATION,
+  SHOPIFY_DRAFT_ORDER_INVOICE_SEND_MUTATION,
+  SHOPIFY_DRAFT_ORDER_UPDATE_MUTATION,
+  SHOPIFY_FULFILLMENT_CREATE_MUTATION,
+  SHOPIFY_FULFILLMENT_ORDERS_QUERY,
+  SHOPIFY_FULFILLMENT_ORDER_HOLD_MUTATION,
+  SHOPIFY_FULFILLMENT_ORDER_LINE_ITEMS_PAGE_QUERY,
+  SHOPIFY_FULFILLMENT_ORDER_MOVE_MUTATION,
+  SHOPIFY_FULFILLMENT_ORDER_RELEASE_HOLD_MUTATION,
+  SHOPIFY_ORDER_CANCEL_MUTATION,
+  SHOPIFY_ORDER_CAPTURE_MUTATION,
+  SHOPIFY_ORDER_DETAIL_QUERY,
+  SHOPIFY_ORDER_EDIT_BEGIN_MUTATION,
+  SHOPIFY_ORDER_FULFILLMENT_ORDERS_QUERY,
+  SHOPIFY_ORDER_TRANSACTIONS_PAGE_QUERY,
+  SHOPIFY_ORDER_UPDATE_MUTATION,
   SHOPIFY_ORDERS_PAGE_QUERY,
+  SHOPIFY_ORDER_SUMMARIES_QUERY,
   SHOPIFY_ORDERS_WITH_LINE_ITEMS_PAGE_QUERY,
   SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY,
   SHOPIFY_PRODUCTS_BY_TITLE_QUERY,
   SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY,
   SHOPIFY_PRODUCT_VARIANTS_PAGE_WITH_COST_QUERY,
+  SHOPIFY_REFUND_CREATE_IDEMPOTENT_MUTATION,
+  SHOPIFY_REFUND_CREATE_MUTATION,
+  SHOPIFY_RETURNABLE_FULFILLMENTS_QUERY,
+  SHOPIFY_RETURNABLE_FULFILLMENT_LINE_ITEMS_PAGE_QUERY,
+  SHOPIFY_RETURN_CREATE_MUTATION,
   SHOPIFY_SHOP_QUERY,
   SHOPIFY_VARIANTS_PAGE_QUERY,
   SHOPIFY_VARIANT_BY_SKU_QUERY,
   SHOPIFY_VARIANT_BY_SKU_WITH_COST_QUERY,
 } from "../shopify/queries.ts"
 import type {
+  ShopifyCatalogProductsQuery,
+  ShopifyCatalogVariantsQuery,
+  ShopifyDraftOrderCompleteMutation,
+  ShopifyDraftOrderCreateMutation,
+  ShopifyDraftOrderInvoiceSendMutation,
+  ShopifyDraftOrdersQuery,
+  ShopifyDraftOrderUpdateMutation,
+  ShopifyDetailedFulfillmentOrderLineItem,
+  ShopifyDetailedOrderLineItem,
+  ShopifyDetailedOrderTransaction,
+  ShopifyDetailedReturnableFulfillmentLineItem,
+  ShopifyFulfillmentCreateMutation,
+  ShopifyFulfillmentOrderHoldMutation,
+  ShopifyFulfillmentOrderLineItemsPage,
+  ShopifyFulfillmentOrderMoveMutation,
+  ShopifyFulfillmentOrderReleaseHoldMutation,
+  ShopifyFulfillmentOrdersQuery,
+  ShopifyFulfillmentHoldNode,
+  ShopifyFulfillmentOrderNode,
   ShopifyGraphQLClient,
   ShopifyGraphQLResponse,
   ShopifyInitialOrderLineItem,
+  ShopifyMutationUserError,
+  ShopifyOrderCancelMutation,
+  ShopifyOrderCaptureMutation,
+  ShopifyOrderDetailQuery,
+  ShopifyOrderDetailFulfillmentOrder,
+  ShopifyOrderEditBeginMutation,
+  ShopifyOrderFulfillmentOrdersQuery,
   ShopifyOrderLineItemsPage,
+  ShopifyOrderTransactionsPage,
+  ShopifyOrderSummariesPage,
+  ShopifyOrderUpdateMutation,
   ShopifyOrderWithLineItems,
   ShopifyOrdersPage,
   ShopifyOrdersWithLineItemsPage,
+  ShopifyPaginatedOrderTransaction,
   ShopifyPaginatedOrderLineItem,
   ShopifyProductByTitle,
   ShopifyProductVariantNode,
   ShopifyProductVariantsPage,
   ShopifyProductWithVariants,
   ShopifyProductsByTitlePage,
+  ShopifyRefundCreateMutation,
+  ShopifyReturnableFulfillmentLineItemsPage,
+  ShopifyReturnableFulfillmentsQuery,
+  ShopifyReturnableFulfillmentNode,
+  ShopifyReturnCreateMutation,
   ShopifyResolvedCandidate,
   ShopifyResolvedVariant,
   ShopifyVariantLookupPage,
   ShopifyVariantsPage,
   ShopifyVariantSelection,
 } from "../shopify/types.ts"
-import {
-  DEFAULT_PLUGIN_CONFIG,
-  DEFAULT_PRODUCT_DECISION_POLICY,
-  type ProductDecisionPolicy,
-  type ShopifyStoreConfig,
-} from "../config.ts"
+import { DEFAULT_PLUGIN_CONFIG, type ShopifyStoreConfig } from "../config.ts"
 import { createShopifyClient, formatShopifyErrors, getDateRange } from "../shopify/client.ts"
 import {
-  currency,
   type FlowResolution,
   grossMarginPct,
   isValidTimeZone,
-  minimumPriceForGrossMargin,
   needsInput,
   normalizeSku,
-  optionalNumber,
-  percentage,
   ready,
   sum,
   toArray,
@@ -134,8 +186,6 @@ export type ShopifyProductSnapshot = ShopifyInventorySnapshot & {
   currentMarginPct: number | null
 }
 
-export type ProductDecisionDemandStatus = "healthy" | "moderate" | "weak" | "insufficient_data"
-
 export type ShopifyProductActionSnapshot = ShopifyRestockSnapshot & {
   currencyCode: string | null
   inventoryDaysLeft: number
@@ -144,71 +194,650 @@ export type ShopifyProductActionSnapshot = ShopifyRestockSnapshot & {
   currentMarginPct: number | null
 }
 
-type ProductActionDecisionBase = {
+export type ShopifyCatalogProductSnapshot = {
+  id: string
+  title: string
+  handle: string | null
+  status: string | null
+  vendor: string | null
+  totalInventory: number | null
+}
+
+export type ShopifyCatalogProductsQuerySnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
   storeName: string
   timezone: string
-  currencyCode: string | null
-  productName: string
-  sku: string
-  lookbackDays: number
-  dailySalesUnits: number
-  demandStatus: ProductDecisionDemandStatus
+  query: string | null
+  pageInfo: {
+    hasNextPage: boolean
+    endCursor: string | null
+  }
+  products: ShopifyCatalogProductSnapshot[]
+}
+
+export type ShopifyCatalogVariantSnapshot = {
+  id: string
+  sku: string | null
+  displayName: string
+  productId: string | null
+  productTitle: string | null
+  inventoryQuantity: number
+  price: number | null
+  currencyCode: string
+}
+
+export type ShopifyCatalogVariantsQuerySnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  query: string | null
+  pageInfo: {
+    hasNextPage: boolean
+    endCursor: string | null
+  }
+  variants: ShopifyCatalogVariantSnapshot[]
+}
+
+export type ShopifyOrderSummarySnapshot = {
+  id: string
+  name: string
+  createdAt: string
+  displayFinancialStatus: string
+  displayFulfillmentStatus: string
   unitsSold: number
-  onHandUnits: number
-  inventoryDaysLeft: number
-  stockoutDetected: boolean
-  hasInsufficientDemandData: boolean
+  totalPrice: number
+  currencyCode: string
+  customerName: string | null
+  customerEmail: string | null
 }
 
-type ProductActionPricingEvaluation = {
-  averageUnitPrice: number
-  averageUnitCost: number | null
-  currentMarginPct: number | null
-  marginFloorPct: number | null
-  hasValidMarginFloor: boolean
-  minimumAllowedUnitPrice: number | null
-  maximumDiscountPctFromAveragePrice: number | null
-}
-
-type ProductActionPricingDecisionSupport = ProductActionPricingEvaluation & {
-  hasMarginData: boolean
-  marginAtOrBelowFloor: boolean
-  veryLowUnitsSoldThreshold: number
-}
-
-export type ProductDecisionConfidence = "high" | "medium" | "low"
-
-export type ProductDecisionAction = string
-
-type ProductActionGuidance = {
-  decisionSummary: string
-  decisionConfidence: ProductDecisionConfidence
-  analysisPoints: string[]
-  recommendedActions: ProductDecisionAction[]
-  reviewWindowDays: number
-  escalationTrigger: string | null
-}
-
-export type ReplenishmentDecisionEvaluation = ProductActionDecisionBase & {
-  targetStockUnits: number
-  recommendedReorderUnits: number
-  replenishmentDecision: "restock_now" | "restock_soon" | "hold_inventory" | "do_not_restock"
-  replenishmentReason: string
-}
-
-export type DiscountDecisionEvaluation = ProductActionDecisionBase &
-  ProductActionPricingEvaluation &
-  ProductActionGuidance & {
-    discountDecision: "hold_price" | "test_discount" | "discount_blocked"
-    discountReason: string
+export type ShopifyOrdersQuerySnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  query: string | null
+  pageInfo: {
+    hasNextPage: boolean
+    endCursor: string | null
   }
+  orders: ShopifyOrderSummarySnapshot[]
+}
 
-export type ClearanceDecisionEvaluation = ProductActionDecisionBase &
-  ProductActionPricingEvaluation &
-  ProductActionGuidance & {
-    clearanceDecision: "not_clearance_candidate" | "review_for_clearance" | "clear_inventory"
-    clearanceReason: string
+export type ShopifyDraftOrderSummarySnapshot = {
+  id: string
+  name: string
+  status: string | null
+  ready: boolean | null
+  createdAt: string | null
+  updatedAt: string | null
+  invoiceUrl: string | null
+  invoiceSentAt: string | null
+  reserveInventoryUntil: string | null
+  email: string | null
+  note: string | null
+  tags: string[]
+  taxExempt: boolean | null
+  totalPrice: number
+  currencyCode: string
+  orderId: string | null
+  orderName: string | null
+}
+
+export type ShopifyDraftOrdersQuerySnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  query: string | null
+  pageInfo: {
+    hasNextPage: boolean
+    endCursor: string | null
   }
+  draftOrders: ShopifyDraftOrderSummarySnapshot[]
+}
+
+export type ShopifyOrderLineItemSnapshot = {
+  id: string
+  sku: string | null
+  name: string
+  quantity: number
+  refundableQuantity: number
+  unfulfilledQuantity: number
+}
+
+export type ShopifyOrderTransactionSnapshot = {
+  id: string
+  kind: string | null
+  status: string | null
+  gateway: string | null
+  processedAt: string | null
+  amount: number
+  currencyCode: string
+}
+
+export type ShopifyFulfillmentOrderLineItemSnapshot = {
+  id: string
+  remainingQuantity: number
+  totalQuantity: number
+  orderLineItemId: string | null
+  sku: string | null
+  name: string
+  orderQuantity: number
+}
+
+export type ShopifyOrderFulfillmentOrderSnapshot = {
+  id: string
+  status: string | null
+  requestStatus: string | null
+  assignedLocationName: string | null
+  assignedLocationId: string | null
+  lineItems: ShopifyFulfillmentOrderLineItemSnapshot[]
+}
+
+export type ShopifyFulfillmentHoldSnapshot = {
+  id: string | null
+  reason: string | null
+  reasonNotes: string | null
+  handle: string | null
+}
+
+export type ShopifyFulfillmentOrderMoveCandidateSnapshot = {
+  locationId: string | null
+  locationName: string | null
+  movable: boolean | null
+  message: string | null
+  availableLineItemsCount: number | null
+  unavailableLineItemsCount: number | null
+}
+
+export type ShopifyFulfillmentOrderSummarySnapshot = {
+  id: string
+  createdAt: string | null
+  updatedAt: string | null
+  status: string | null
+  requestStatus: string | null
+  orderId: string | null
+  orderName: string | null
+  fulfillAt: string | null
+  fulfillBy: string | null
+  assignedLocationName: string | null
+  assignedLocationId: string | null
+  deliveryMethodType: string | null
+  destinationCity: string | null
+  destinationCountryCode: string | null
+  supportedActions: string[]
+  holds: ShopifyFulfillmentHoldSnapshot[]
+  lineItems: ShopifyFulfillmentOrderLineItemSnapshot[]
+  moveCandidates: ShopifyFulfillmentOrderMoveCandidateSnapshot[]
+}
+
+export type ShopifyFulfillmentOrdersQuerySnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  query: string | null
+  includeClosed: boolean
+  pageInfo: {
+    hasNextPage: boolean
+    endCursor: string | null
+  }
+  fulfillmentOrders: ShopifyFulfillmentOrderSummarySnapshot[]
+}
+
+export type ShopifyOrderDetailSnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string
+  name: string
+  createdAt: string
+  cancelledAt: string | null
+  cancelReason: string | null
+  displayFinancialStatus: string
+  displayFulfillmentStatus: string
+  note: string | null
+  tags: string[]
+  unitsSold: number
+  totalPrice: number
+  totalRefunded: number
+  currencyCode: string
+  customerName: string | null
+  customerEmail: string | null
+  lineItems: ShopifyOrderLineItemSnapshot[]
+  transactions: ShopifyOrderTransactionSnapshot[]
+  fulfillmentOrders: ShopifyOrderFulfillmentOrderSnapshot[]
+  fulfillmentOrdersErrorMessage?: string
+}
+
+export type ShopifyReturnableLineItemSnapshot = {
+  fulfillmentLineItemId: string
+  orderLineItemId: string | null
+  sku: string | null
+  name: string
+  quantity: number
+  returnableQuantity: number
+}
+
+export type ShopifyReturnableFulfillmentSnapshot = {
+  id: string
+  fulfillmentId: string | null
+  lineItems: ShopifyReturnableLineItemSnapshot[]
+}
+
+export type ShopifyReturnableFulfillmentsSnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string
+  returnableFulfillments: ShopifyReturnableFulfillmentSnapshot[]
+}
+
+export type ShopifyMutationUserErrorSnapshot = {
+  field: string | null
+  message: string
+  code?: string | null
+}
+
+export type ShopifyFulfillmentTrackingInfoSnapshot = {
+  company: string | null
+  number: string | null
+  url: string | null
+}
+
+export type ShopifyFulfillmentCreateResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  fulfillmentId: string | null
+  status: string | null
+  trackingInfo: ShopifyFulfillmentTrackingInfoSnapshot[]
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyOrderCancelResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string
+  jobId: string | null
+  jobDone: boolean | null
+  orderCancelUserErrors: ShopifyMutationUserErrorSnapshot[]
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyOrderCaptureResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string
+  transactionId: string | null
+  transactionKind: string | null
+  transactionStatus: string | null
+  processedAt: string | null
+  amount: number
+  currencyCode: string
+  parentTransactionId: string | null
+  capturable: boolean | null
+  totalCapturable: number
+  totalCapturableCurrencyCode: string
+  multiCapturable: boolean | null
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyOrderUpdateAttributeSnapshot = {
+  key: string
+  value: string
+}
+
+export type ShopifyOrderUpdateAddressSnapshot = {
+  firstName: string | null
+  lastName: string | null
+  company: string | null
+  address1: string | null
+  address2: string | null
+  city: string | null
+  province: string | null
+  provinceCode: string | null
+  country: string | null
+  countryCode: string | null
+  zip: string | null
+  phone: string | null
+}
+
+export type ShopifyOrderUpdateResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string
+  name: string | null
+  displayFinancialStatus: string | null
+  displayFulfillmentStatus: string | null
+  note: string | null
+  email: string | null
+  phone: string | null
+  poNumber: string | null
+  tags: string[]
+  customAttributes: ShopifyOrderUpdateAttributeSnapshot[]
+  shippingAddress: ShopifyOrderUpdateAddressSnapshot | null
+  totalPrice: number
+  currencyCode: string
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyCalculatedOrderLineItemSnapshot = {
+  id: string
+  sku: string | null
+  title: string
+  quantity: number
+}
+
+export type ShopifyOrderEditBeginResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string
+  orderName: string | null
+  orderEditSessionId: string | null
+  calculatedOrderId: string | null
+  subtotalLineItemsQuantity: number
+  subtotalPrice: number
+  totalOutstanding: number
+  currencyCode: string
+  lineItems: ShopifyCalculatedOrderLineItemSnapshot[]
+  stagedChangeTypes: string[]
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyReturnCreateResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string
+  returnId: string | null
+  status: string | null
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyRefundCreateResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string
+  refundId: string | null
+  note: string | null
+  createdAt: string | null
+  totalRefunded: number
+  currencyCode: string
+  transactions: ShopifyOrderTransactionSnapshot[]
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyDraftOrderActionResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  draftOrder: ShopifyDraftOrderSummarySnapshot | null
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyFulfillmentOrderActionResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  fulfillmentOrder: ShopifyFulfillmentOrderSummarySnapshot | null
+  originalFulfillmentOrder: ShopifyFulfillmentOrderSummarySnapshot | null
+  movedFulfillmentOrder: ShopifyFulfillmentOrderSummarySnapshot | null
+  remainingFulfillmentOrder: ShopifyFulfillmentOrderSummarySnapshot | null
+  fulfillmentHold: ShopifyFulfillmentHoldSnapshot | null
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyFulfillmentCreateInput = {
+  lineItemsByFulfillmentOrder: Array<{
+    fulfillmentOrderId: string
+    fulfillmentOrderLineItems?: Array<{
+      id: string
+      quantity: number
+    }>
+  }>
+  notifyCustomer?: boolean
+  trackingInfo?: {
+    company?: string
+    number?: string
+    url?: string
+  }
+  originAddress?: {
+    address1?: string
+    address2?: string
+    city?: string
+    provinceCode?: string
+    countryCode?: string
+    zip?: string
+  }
+  message?: string
+}
+
+export type ShopifyOrderCancelInput = {
+  orderId: string
+  notifyCustomer?: boolean
+  refundMethod: {
+    originalPaymentMethodsRefund: boolean
+  }
+  restock: boolean
+  reason: "CUSTOMER" | "DECLINED" | "FRAUD" | "INVENTORY" | "OTHER" | "STAFF"
+  staffNote?: string
+}
+
+export type ShopifyOrderCaptureInput = {
+  orderId: string
+  parentTransactionId: string
+  amount: number
+  currency?: string
+  finalCapture?: boolean
+}
+
+export type ShopifyOrderUpdateInput = {
+  orderId: string
+  customAttributes?: ShopifyDraftOrderAttributeInput[]
+  email?: string
+  note?: string
+  phone?: string
+  poNumber?: string
+  shippingAddress?: ShopifyDraftOrderAddressInput
+  tags?: string[]
+}
+
+export type ShopifyOrderEditBeginInput = {
+  orderId: string
+}
+
+export type ShopifyReturnCreateInput = {
+  orderId: string
+  returnLineItems: Array<{
+    fulfillmentLineItemId: string
+    quantity: number
+    returnReason?: string
+    returnReasonNote?: string
+    returnReasonDefinitionId?: string
+  }>
+  notifyCustomer?: boolean
+  requestedAt?: string
+}
+
+export type ShopifyRefundCreateInput = {
+  orderId: string
+  notify?: boolean
+  note?: string
+  currency?: string
+  allowOverRefunding?: boolean
+  discrepancyReason?: string
+  shipping?: {
+    amount: number
+  }
+  refundLineItems?: Array<{
+    lineItemId: string
+    quantity: number
+    restockType?: "NO_RESTOCK" | "CANCEL" | "RETURN"
+    locationId?: string
+  }>
+  transactions?: Array<{
+    amount: number
+    gateway: string
+    kind?: "REFUND"
+    orderId?: string
+    parentId?: string
+  }>
+  idempotencyKey?: string
+}
+
+export type ShopifyDraftOrderAttributeInput = {
+  key: string
+  value: string
+}
+
+export type ShopifyDraftOrderAddressInput = {
+  firstName?: string
+  lastName?: string
+  company?: string
+  address1?: string
+  address2?: string
+  city?: string
+  province?: string
+  provinceCode?: string
+  country?: string
+  countryCode?: string
+  zip?: string
+  phone?: string
+}
+
+export type ShopifyDraftOrderAppliedDiscountInput = {
+  value: number
+  valueType: "FIXED_AMOUNT" | "PERCENTAGE"
+  amount?: number
+  title?: string
+  description?: string
+}
+
+export type ShopifyDraftOrderLineItemInput =
+  | {
+      quantity: number
+      variantId: string
+      appliedDiscount?: ShopifyDraftOrderAppliedDiscountInput
+      customAttributes?: ShopifyDraftOrderAttributeInput[]
+    }
+  | {
+      quantity: number
+      title: string
+      originalUnitPrice: number
+      appliedDiscount?: ShopifyDraftOrderAppliedDiscountInput
+      customAttributes?: ShopifyDraftOrderAttributeInput[]
+      weight?: {
+        value: number
+        unit: "GRAMS" | "KILOGRAMS" | "OUNCES" | "POUNDS"
+      }
+    }
+
+export type ShopifyDraftOrderInput = {
+  lineItems?: ShopifyDraftOrderLineItemInput[]
+  email?: string
+  note?: string
+  tags?: string[]
+  taxExempt?: boolean
+  reserveInventoryUntil?: string
+  billingAddress?: ShopifyDraftOrderAddressInput
+  shippingAddress?: ShopifyDraftOrderAddressInput
+  shippingLine?: {
+    title: string
+    price: number
+  }
+  appliedDiscount?: ShopifyDraftOrderAppliedDiscountInput
+  customAttributes?: ShopifyDraftOrderAttributeInput[]
+}
+
+export type ShopifyDraftOrdersQueryInput = {
+  query?: string
+  first?: number
+  after?: string
+  reverse?: boolean
+}
+
+export type ShopifyDraftOrderCreateInput = ShopifyDraftOrderInput & {
+  lineItems: ShopifyDraftOrderLineItemInput[]
+}
+
+export type ShopifyDraftOrderUpdateInput = ShopifyDraftOrderInput & {
+  draftOrderId: string
+}
+
+export type ShopifyDraftOrderInvoiceSendInput = {
+  draftOrderId: string
+  email?: {
+    to?: string
+    subject?: string
+    customMessage?: string
+  }
+}
+
+export type ShopifyDraftOrderCompleteInput = {
+  draftOrderId: string
+  paymentGatewayId?: string
+  sourceName?: string
+}
+
+export type ShopifyFulfillmentOrdersQueryInput = {
+  query?: string
+  first?: number
+  after?: string
+  reverse?: boolean
+  includeClosed?: boolean
+}
+
+export type ShopifyFulfillmentOrderLineItemInput = {
+  id: string
+  quantity: number
+}
+
+export type ShopifyFulfillmentOrderHoldInput = {
+  fulfillmentOrderId: string
+  reason:
+    | "AWAITING_PAYMENT"
+    | "HIGH_RISK_OF_FRAUD"
+    | "INCORRECT_ADDRESS"
+    | "INVENTORY_OUT_OF_STOCK"
+    | "OTHER"
+  reasonNotes?: string
+  notifyMerchant?: boolean
+  handle?: string
+  externalId?: string
+  fulfillmentOrderLineItems?: ShopifyFulfillmentOrderLineItemInput[]
+}
+
+export type ShopifyFulfillmentOrderReleaseHoldInput = {
+  fulfillmentOrderId: string
+  holdIds?: string[]
+  externalId?: string
+}
+
+export type ShopifyFulfillmentOrderMoveInput = {
+  fulfillmentOrderId: string
+  newLocationId: string
+  fulfillmentOrderLineItems?: ShopifyFulfillmentOrderLineItemInput[]
+}
 
 type ShopifyCandidateMatchKind = "sku_exact" | "title_exact" | "title_fuzzy"
 export type StoreOverviewRangePreset =
@@ -394,6 +1023,912 @@ const fetchShopifyShopMetadata = async (client: ShopifyGraphQLClient) => {
   }
 
   return result.data?.shop ?? null
+}
+
+const trimOrNull = (value: string | null | undefined) => {
+  const trimmed = value?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : null
+}
+
+type ShopifyConnectionPageInfo = {
+  hasNextPage?: boolean
+  endCursor?: string | null
+}
+
+const hasOwnKey = <TInput extends object>(input: TInput, key: PropertyKey) =>
+  Object.prototype.hasOwnProperty.call(input, key)
+
+const mapExplicitStringUpdate = <TInput extends Record<string, unknown>>(
+  input: TInput,
+  key: keyof TInput,
+) => {
+  if (!hasOwnKey(input, key)) {
+    return undefined
+  }
+
+  const value = input[key]
+  return typeof value === "string" ? trimOrNull(value) : undefined
+}
+
+const mapExplicitStringArrayUpdate = <TInput extends Record<string, unknown>>(
+  input: TInput,
+  key: keyof TInput,
+) => {
+  if (!hasOwnKey(input, key)) {
+    return undefined
+  }
+
+  const value = input[key]
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const mappedValues = value
+    .map(item => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean)
+
+  if (mappedValues.length > 0) {
+    return mappedValues
+  }
+
+  return value.length === 0 ? [] : undefined
+}
+
+const toShopifyMoneyAmount = (value: string | null | undefined) =>
+  toNumber(value ? Number(value) : Number.NaN)
+
+const toNullableNumber = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null
+
+const mapShopifyMutationUserErrors = (errors: ShopifyMutationUserError[] | null | undefined) =>
+  toArray<ShopifyMutationUserError>(errors)
+    .map(error => {
+      const message = trimOrNull(error?.message)
+      if (!message) {
+        return null
+      }
+
+      const field = Array.isArray(error?.field)
+        ? error.field
+            .map(segment => trimOrNull(segment))
+            .filter((segment): segment is string => Boolean(segment))
+            .join(".")
+        : null
+
+      const code = trimOrNull(error?.code)
+      const mappedError: ShopifyMutationUserErrorSnapshot = {
+        field: field && field.length > 0 ? field : null,
+        message,
+      }
+
+      if (code !== null) {
+        mappedError.code = code
+      }
+
+      return mappedError
+    })
+    .filter((error): error is ShopifyMutationUserErrorSnapshot => error !== null)
+
+const mapShopifyOrderUpdateAttributes = (
+  attributes:
+    | Array<{
+        key?: string | null
+        value?: string | null
+      }>
+    | null
+    | undefined,
+) =>
+  toArray<{
+    key?: string | null
+    value?: string | null
+  }>(attributes)
+    .map(attribute => {
+      const key = trimOrNull(attribute?.key)
+      const value = trimOrNull(attribute?.value)
+      if (!key || !value) {
+        return null
+      }
+
+      return {
+        key,
+        value,
+      }
+    })
+    .filter((attribute): attribute is ShopifyOrderUpdateAttributeSnapshot => attribute !== null)
+
+const mapShopifyOrderUpdateAddress = (
+  address:
+    | {
+        firstName?: string | null
+        lastName?: string | null
+        company?: string | null
+        address1?: string | null
+        address2?: string | null
+        city?: string | null
+        province?: string | null
+        provinceCode?: string | null
+        country?: string | null
+        countryCodeV2?: string | null
+        zip?: string | null
+        phone?: string | null
+      }
+    | null
+    | undefined,
+): ShopifyOrderUpdateAddressSnapshot | null => {
+  if (!address) {
+    return null
+  }
+
+  const snapshot = {
+    firstName: trimOrNull(address.firstName),
+    lastName: trimOrNull(address.lastName),
+    company: trimOrNull(address.company),
+    address1: trimOrNull(address.address1),
+    address2: trimOrNull(address.address2),
+    city: trimOrNull(address.city),
+    province: trimOrNull(address.province),
+    provinceCode: trimOrNull(address.provinceCode),
+    country: trimOrNull(address.country),
+    countryCode: trimOrNull(address.countryCodeV2),
+    zip: trimOrNull(address.zip),
+    phone: trimOrNull(address.phone),
+  }
+
+  return Object.values(snapshot).some(value => value !== null) ? snapshot : null
+}
+
+const mapShopifyCalculatedOrderLineItems = (
+  lineItems:
+    | Array<{
+        id?: string | null
+        sku?: string | null
+        title?: string | null
+        quantity?: number | null
+      }>
+    | null
+    | undefined,
+) =>
+  toArray<{
+    id?: string | null
+    sku?: string | null
+    title?: string | null
+    quantity?: number | null
+  }>(lineItems)
+    .map(lineItem => {
+      const id = trimOrNull(lineItem?.id)
+      if (!id) {
+        return null
+      }
+
+      return {
+        id,
+        sku: trimOrNull(lineItem?.sku),
+        title: trimOrNull(lineItem?.title) ?? "Unnamed item",
+        quantity: toNumber(lineItem?.quantity),
+      }
+    })
+    .filter((lineItem): lineItem is ShopifyCalculatedOrderLineItemSnapshot => lineItem !== null)
+
+const mapShopifyOrderTransactions = (
+  transactions: Array<{
+    id?: string | null
+    kind?: string | null
+    status?: string | null
+    gateway?: string | null
+    processedAt?: string | null
+    amountSet?: {
+      shopMoney?: {
+        amount?: string | null
+        currencyCode?: string | null
+      } | null
+    } | null
+  }>,
+  fallbackCurrencyCode: string,
+) =>
+  transactions
+    .map(transaction => {
+      const id = trimOrNull(transaction?.id)
+      if (!id) {
+        return null
+      }
+
+      return {
+        id,
+        kind: trimOrNull(transaction?.kind),
+        status: trimOrNull(transaction?.status),
+        gateway: trimOrNull(transaction?.gateway),
+        processedAt: trimOrNull(transaction?.processedAt),
+        amount: toShopifyMoneyAmount(transaction?.amountSet?.shopMoney?.amount),
+        currencyCode:
+          trimOrNull(transaction?.amountSet?.shopMoney?.currencyCode) ?? fallbackCurrencyCode,
+      }
+    })
+    .filter((transaction): transaction is ShopifyOrderTransactionSnapshot => transaction !== null)
+
+const mapShopifyDraftOrderSummary = (
+  draftOrder:
+    | {
+        id?: string | null
+        name?: string | null
+        status?: string | null
+        ready?: boolean | null
+        createdAt?: string | null
+        updatedAt?: string | null
+        invoiceUrl?: string | null
+        invoiceSentAt?: string | null
+        reserveInventoryUntil?: string | null
+        email?: string | null
+        note?: string | null
+        tags?: string[] | null
+        taxExempt?: boolean | null
+        totalPriceSet?: {
+          presentmentMoney?: {
+            amount?: string | null
+            currencyCode?: string | null
+          } | null
+        } | null
+        order?: {
+          id?: string | null
+          name?: string | null
+        } | null
+      }
+    | null
+    | undefined,
+  fallbackCurrencyCode: string,
+): ShopifyDraftOrderSummarySnapshot | null => {
+  const id = trimOrNull(draftOrder?.id)
+  if (!id) {
+    return null
+  }
+
+  const currencyCode =
+    trimOrNull(draftOrder?.totalPriceSet?.presentmentMoney?.currencyCode) ?? fallbackCurrencyCode
+
+  return {
+    id,
+    name: trimOrNull(draftOrder?.name) ?? id,
+    status: trimOrNull(draftOrder?.status),
+    ready: typeof draftOrder?.ready === "boolean" ? draftOrder.ready : null,
+    createdAt: trimOrNull(draftOrder?.createdAt),
+    updatedAt: trimOrNull(draftOrder?.updatedAt),
+    invoiceUrl: trimOrNull(draftOrder?.invoiceUrl),
+    invoiceSentAt: trimOrNull(draftOrder?.invoiceSentAt),
+    reserveInventoryUntil: trimOrNull(draftOrder?.reserveInventoryUntil),
+    email: trimOrNull(draftOrder?.email),
+    note: trimOrNull(draftOrder?.note),
+    tags: toArray<string>(draftOrder?.tags)
+      .map(tag => tag.trim())
+      .filter(Boolean),
+    taxExempt: typeof draftOrder?.taxExempt === "boolean" ? draftOrder.taxExempt : null,
+    totalPrice: toShopifyMoneyAmount(draftOrder?.totalPriceSet?.presentmentMoney?.amount),
+    currencyCode,
+    orderId: trimOrNull(draftOrder?.order?.id),
+    orderName: trimOrNull(draftOrder?.order?.name),
+  }
+}
+
+const mapShopifyDraftOrders = (
+  draftOrders: Array<{
+    id?: string | null
+    name?: string | null
+    status?: string | null
+    ready?: boolean | null
+    createdAt?: string | null
+    updatedAt?: string | null
+    invoiceUrl?: string | null
+    invoiceSentAt?: string | null
+    reserveInventoryUntil?: string | null
+    email?: string | null
+    note?: string | null
+    tags?: string[] | null
+    taxExempt?: boolean | null
+    totalPriceSet?: {
+      presentmentMoney?: {
+        amount?: string | null
+        currencyCode?: string | null
+      } | null
+    } | null
+    order?: {
+      id?: string | null
+      name?: string | null
+    } | null
+  }>,
+  fallbackCurrencyCode: string,
+) =>
+  draftOrders
+    .map(draftOrder => mapShopifyDraftOrderSummary(draftOrder, fallbackCurrencyCode))
+    .filter((draftOrder): draftOrder is ShopifyDraftOrderSummarySnapshot => draftOrder !== null)
+
+const mapShopifyOrderLineItems = (
+  lineItems: Array<{
+    id?: string | null
+    sku?: string | null
+    name?: string | null
+    quantity?: number | null
+    refundableQuantity?: number | null
+    unfulfilledQuantity?: number | null
+  }>,
+) =>
+  lineItems
+    .map(lineItem => {
+      const id = trimOrNull(lineItem?.id)
+      if (!id) {
+        return null
+      }
+
+      return {
+        id,
+        sku: trimOrNull(lineItem?.sku),
+        name: trimOrNull(lineItem?.name) ?? "Unnamed item",
+        quantity: toNumber(lineItem?.quantity),
+        refundableQuantity: toNumber(lineItem?.refundableQuantity),
+        unfulfilledQuantity: toNumber(lineItem?.unfulfilledQuantity),
+      }
+    })
+    .filter((lineItem): lineItem is ShopifyOrderLineItemSnapshot => lineItem !== null)
+
+const mapShopifyFulfillmentOrderLineItems = (
+  lineItems: Array<{
+    id?: string | null
+    remainingQuantity?: number | null
+    totalQuantity?: number | null
+    lineItem?: {
+      id?: string | null
+      sku?: string | null
+      name?: string | null
+      quantity?: number | null
+    } | null
+  }>,
+) =>
+  lineItems
+    .map(lineItem => {
+      const lineItemId = trimOrNull(lineItem?.id)
+      if (!lineItemId) {
+        return null
+      }
+
+      return {
+        id: lineItemId,
+        remainingQuantity: toNumber(lineItem?.remainingQuantity),
+        totalQuantity: toNumber(lineItem?.totalQuantity),
+        orderLineItemId: trimOrNull(lineItem?.lineItem?.id),
+        sku: trimOrNull(lineItem?.lineItem?.sku),
+        name: trimOrNull(lineItem?.lineItem?.name) ?? "Unnamed item",
+        orderQuantity: toNumber(lineItem?.lineItem?.quantity),
+      }
+    })
+    .filter((lineItem): lineItem is ShopifyFulfillmentOrderLineItemSnapshot => lineItem !== null)
+
+const mapShopifyFulfillmentHolds = (holds: ShopifyFulfillmentHoldNode[] | null | undefined) =>
+  toArray<ShopifyFulfillmentHoldNode>(holds)
+    .map(hold => ({
+      id: trimOrNull(hold?.id),
+      reason: trimOrNull(hold?.reason),
+      reasonNotes: trimOrNull(hold?.reasonNotes),
+      handle: trimOrNull(hold?.handle),
+    }))
+    .filter(hold => hold.id || hold.reason || hold.reasonNotes || hold.handle)
+
+const mapShopifyFulfillmentMoveCandidates = (
+  candidates:
+    | {
+        edges?: Array<{
+          node?: {
+            location?: {
+              id?: string | null
+              name?: string | null
+            } | null
+            message?: string | null
+            movable?: boolean | null
+            availableLineItemsCount?: {
+              count?: number | null
+            } | null
+            unavailableLineItemsCount?: {
+              count?: number | null
+            } | null
+          } | null
+        }>
+      }
+    | null
+    | undefined,
+) =>
+  toArray<NonNullable<NonNullable<typeof candidates>["edges"]>[number]>(candidates?.edges)
+    .map(edge => ({
+      locationId: trimOrNull(edge?.node?.location?.id),
+      locationName: trimOrNull(edge?.node?.location?.name),
+      movable: typeof edge?.node?.movable === "boolean" ? edge.node.movable : null,
+      message: trimOrNull(edge?.node?.message),
+      availableLineItemsCount: toNullableNumber(edge?.node?.availableLineItemsCount?.count),
+      unavailableLineItemsCount: toNullableNumber(edge?.node?.unavailableLineItemsCount?.count),
+    }))
+    .filter(
+      candidate =>
+        candidate.locationId ||
+        candidate.locationName ||
+        candidate.message ||
+        candidate.movable !== null ||
+        candidate.availableLineItemsCount !== null ||
+        candidate.unavailableLineItemsCount !== null,
+    )
+
+const mapShopifyFulfillmentOrderSummary = (
+  fulfillmentOrder: ShopifyFulfillmentOrderNode | null | undefined,
+): ShopifyFulfillmentOrderSummarySnapshot | null => {
+  const id = trimOrNull(fulfillmentOrder?.id)
+  if (!id) {
+    return null
+  }
+
+  return {
+    id,
+    createdAt: trimOrNull(fulfillmentOrder?.createdAt),
+    updatedAt: trimOrNull(fulfillmentOrder?.updatedAt),
+    status: trimOrNull(fulfillmentOrder?.status),
+    requestStatus: trimOrNull(fulfillmentOrder?.requestStatus),
+    orderId: trimOrNull(fulfillmentOrder?.orderId),
+    orderName: trimOrNull(fulfillmentOrder?.orderName),
+    fulfillAt: trimOrNull(fulfillmentOrder?.fulfillAt),
+    fulfillBy: trimOrNull(fulfillmentOrder?.fulfillBy),
+    assignedLocationName: trimOrNull(fulfillmentOrder?.assignedLocation?.name),
+    assignedLocationId: trimOrNull(fulfillmentOrder?.assignedLocation?.location?.id),
+    deliveryMethodType: trimOrNull(fulfillmentOrder?.deliveryMethod?.methodType),
+    destinationCity: trimOrNull(fulfillmentOrder?.destination?.city),
+    destinationCountryCode: trimOrNull(fulfillmentOrder?.destination?.countryCode),
+    supportedActions: toArray<{ action?: string | null }>(fulfillmentOrder?.supportedActions)
+      .map(action => trimOrNull(action?.action))
+      .filter((action): action is string => Boolean(action)),
+    holds: mapShopifyFulfillmentHolds(fulfillmentOrder?.fulfillmentHolds),
+    lineItems: mapShopifyFulfillmentOrderLineItems(
+      toArray<{
+        id?: string | null
+        remainingQuantity?: number | null
+        totalQuantity?: number | null
+        lineItem?: {
+          id?: string | null
+          sku?: string | null
+          name?: string | null
+          quantity?: number | null
+        } | null
+      }>(fulfillmentOrder?.lineItems?.nodes),
+    ),
+    moveCandidates: mapShopifyFulfillmentMoveCandidates(fulfillmentOrder?.locationsForMove),
+  }
+}
+
+const mapShopifyFulfillmentOrders = (
+  fulfillmentOrders: Array<{
+    id?: string | null
+    status?: string | null
+    requestStatus?: string | null
+    assignedLocation?: {
+      name?: string | null
+      location?: {
+        id?: string | null
+      } | null
+    } | null
+    lineItems?: {
+      nodes?: Array<{
+        id?: string | null
+        remainingQuantity?: number | null
+        totalQuantity?: number | null
+        lineItem?: {
+          id?: string | null
+          sku?: string | null
+          name?: string | null
+          quantity?: number | null
+        } | null
+      }>
+    } | null
+  }>,
+) =>
+  fulfillmentOrders
+    .map(fulfillmentOrder => {
+      const id = trimOrNull(fulfillmentOrder?.id)
+      if (!id) {
+        return null
+      }
+
+      const lineItems = mapShopifyFulfillmentOrderLineItems(
+        toArray<NonNullable<NonNullable<typeof fulfillmentOrder.lineItems>["nodes"]>[number]>(
+          fulfillmentOrder?.lineItems?.nodes,
+        ),
+      )
+
+      return {
+        id,
+        status: trimOrNull(fulfillmentOrder?.status),
+        requestStatus: trimOrNull(fulfillmentOrder?.requestStatus),
+        assignedLocationName: trimOrNull(fulfillmentOrder?.assignedLocation?.name),
+        assignedLocationId: trimOrNull(fulfillmentOrder?.assignedLocation?.location?.id),
+        lineItems,
+      }
+    })
+    .filter(
+      (fulfillmentOrder): fulfillmentOrder is ShopifyOrderFulfillmentOrderSnapshot =>
+        fulfillmentOrder !== null,
+    )
+
+const mapShopifyReturnableFulfillments = (
+  returnableFulfillments: Array<{
+    id?: string | null
+    fulfillment?: {
+      id?: string | null
+    } | null
+    returnableFulfillmentLineItems?: {
+      nodes?: Array<{
+        quantity?: number | null
+        fulfillmentLineItem?: {
+          id?: string | null
+          lineItem?: {
+            id?: string | null
+            sku?: string | null
+            name?: string | null
+            quantity?: number | null
+          } | null
+        } | null
+      }>
+    } | null
+  }>,
+) =>
+  returnableFulfillments
+    .map(returnableFulfillment => {
+      const id = trimOrNull(returnableFulfillment?.id)
+      if (!id) {
+        return null
+      }
+
+      const lineItems = toArray<
+        NonNullable<
+          NonNullable<typeof returnableFulfillment.returnableFulfillmentLineItems>["nodes"]
+        >[number]
+      >(returnableFulfillment?.returnableFulfillmentLineItems?.nodes)
+        .map(lineItem => {
+          const fulfillmentLineItemId = trimOrNull(lineItem?.fulfillmentLineItem?.id)
+          if (!fulfillmentLineItemId) {
+            return null
+          }
+
+          return {
+            fulfillmentLineItemId,
+            orderLineItemId: trimOrNull(lineItem?.fulfillmentLineItem?.lineItem?.id),
+            sku: trimOrNull(lineItem?.fulfillmentLineItem?.lineItem?.sku),
+            name: trimOrNull(lineItem?.fulfillmentLineItem?.lineItem?.name) ?? "Unnamed item",
+            quantity: toNumber(lineItem?.fulfillmentLineItem?.lineItem?.quantity),
+            returnableQuantity: toNumber(lineItem?.quantity),
+          }
+        })
+        .filter((lineItem): lineItem is ShopifyReturnableLineItemSnapshot => lineItem !== null)
+
+      return {
+        id,
+        fulfillmentId: trimOrNull(returnableFulfillment?.fulfillment?.id),
+        lineItems,
+      }
+    })
+    .filter(
+      (returnableFulfillment): returnableFulfillment is ShopifyReturnableFulfillmentSnapshot =>
+        returnableFulfillment !== null,
+    )
+
+const mapShopifyCatalogProducts = (
+  products: Array<{
+    id?: string | null
+    title?: string | null
+    handle?: string | null
+    status?: string | null
+    vendor?: string | null
+    totalInventory?: number | null
+  }>,
+) =>
+  products
+    .map(product => {
+      const id = trimOrNull(product?.id)
+      const title = trimOrNull(product?.title)
+      if (!id || !title) {
+        return null
+      }
+
+      return {
+        id,
+        title,
+        handle: trimOrNull(product?.handle),
+        status: trimOrNull(product?.status),
+        vendor: trimOrNull(product?.vendor),
+        totalInventory: toNullableNumber(product?.totalInventory),
+      }
+    })
+    .filter((product): product is ShopifyCatalogProductSnapshot => product !== null)
+
+const mapShopifyCatalogVariants = (
+  variants: Array<{
+    id?: string | null
+    sku?: string | null
+    displayName?: string | null
+    price?: string | null
+    inventoryQuantity?: number | null
+    product?: {
+      id?: string | null
+      title?: string | null
+    } | null
+  }>,
+  fallbackCurrencyCode: string,
+) =>
+  variants
+    .map(variant => {
+      const id = trimOrNull(variant?.id)
+      if (!id) {
+        return null
+      }
+
+      return {
+        id,
+        sku: trimOrNull(variant?.sku),
+        displayName:
+          trimOrNull(variant?.displayName) ??
+          trimOrNull(variant?.sku) ??
+          trimOrNull(variant?.product?.title) ??
+          id,
+        productId: trimOrNull(variant?.product?.id),
+        productTitle: trimOrNull(variant?.product?.title),
+        inventoryQuantity: toNumber(variant?.inventoryQuantity),
+        price: variant?.price ? toShopifyMoneyAmount(variant.price) : null,
+        currencyCode: fallbackCurrencyCode,
+      }
+    })
+    .filter((variant): variant is ShopifyCatalogVariantSnapshot => variant !== null)
+
+const toShopifyMoneyString = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return "0"
+  }
+
+  return value.toFixed(2)
+}
+
+const mapShopifyDraftOrderAttributes = (
+  attributes: ShopifyDraftOrderAttributeInput[] | undefined,
+  options?: {
+    preserveExplicitEmpty?: boolean
+  },
+) => {
+  const sourceAttributes = toArray<ShopifyDraftOrderAttributeInput>(attributes)
+  const mappedAttributes = sourceAttributes
+    .map(attribute => {
+      const key = trimOrNull(attribute.key)
+      const value = trimOrNull(attribute.value)
+      if (!key || !value) {
+        return null
+      }
+
+      return {
+        key,
+        value,
+      }
+    })
+    .filter((attribute): attribute is { key: string; value: string } => attribute !== null)
+
+  if (mappedAttributes.length > 0) {
+    return mappedAttributes
+  }
+
+  return sourceAttributes.length === 0 && options?.preserveExplicitEmpty ? [] : undefined
+}
+
+const mapShopifyDraftOrderAddress = (address: ShopifyDraftOrderAddressInput | undefined) => {
+  if (!address) {
+    return undefined
+  }
+
+  const mappedAddress = {
+    firstName: trimOrNull(address.firstName) ?? undefined,
+    lastName: trimOrNull(address.lastName) ?? undefined,
+    company: trimOrNull(address.company) ?? undefined,
+    address1: trimOrNull(address.address1) ?? undefined,
+    address2: trimOrNull(address.address2) ?? undefined,
+    city: trimOrNull(address.city) ?? undefined,
+    province: trimOrNull(address.province) ?? undefined,
+    provinceCode: trimOrNull(address.provinceCode) ?? undefined,
+    country: trimOrNull(address.country) ?? undefined,
+    countryCode: trimOrNull(address.countryCode) ?? undefined,
+    zip: trimOrNull(address.zip) ?? undefined,
+    phone: trimOrNull(address.phone) ?? undefined,
+  }
+
+  return Object.values(mappedAddress).some(value => value !== undefined) ? mappedAddress : undefined
+}
+
+const mapShopifyDraftOrderAppliedDiscount = (
+  appliedDiscount: ShopifyDraftOrderAppliedDiscountInput | undefined,
+) => {
+  if (!appliedDiscount || !Number.isFinite(appliedDiscount.value)) {
+    return undefined
+  }
+
+  const normalizedAmount =
+    typeof appliedDiscount.amount === "number" && Number.isFinite(appliedDiscount.amount)
+      ? appliedDiscount.amount
+      : appliedDiscount.valueType === "FIXED_AMOUNT"
+        ? appliedDiscount.value
+        : undefined
+
+  return {
+    value: toShopifyMoneyString(appliedDiscount.value),
+    valueType: appliedDiscount.valueType,
+    amount:
+      typeof normalizedAmount === "number" ? toShopifyMoneyString(normalizedAmount) : undefined,
+    title: trimOrNull(appliedDiscount.title) ?? undefined,
+    description: trimOrNull(appliedDiscount.description) ?? undefined,
+  }
+}
+
+const mapShopifyDraftOrderLineItems = (lineItems: ShopifyDraftOrderLineItemInput[] | undefined) => {
+  const mappedLineItems = toArray<ShopifyDraftOrderLineItemInput>(lineItems)
+    .map(lineItem => {
+      const quantity = Math.max(1, Math.round(lineItem.quantity))
+      const appliedDiscount = mapShopifyDraftOrderAppliedDiscount(lineItem.appliedDiscount)
+      const customAttributes = mapShopifyDraftOrderAttributes(lineItem.customAttributes)
+
+      if ("variantId" in lineItem) {
+        const variantId = trimOrNull(lineItem.variantId)
+        if (!variantId) {
+          return null
+        }
+
+        return {
+          variantId,
+          quantity,
+          appliedDiscount,
+          customAttributes,
+        }
+      }
+
+      const title = trimOrNull(lineItem.title)
+      if (!title) {
+        return null
+      }
+
+      const weight =
+        lineItem.weight && Number.isFinite(lineItem.weight.value)
+          ? {
+              value: lineItem.weight.value,
+              unit: lineItem.weight.unit,
+            }
+          : undefined
+
+      return {
+        title,
+        originalUnitPrice: toShopifyMoneyString(lineItem.originalUnitPrice),
+        quantity,
+        appliedDiscount,
+        customAttributes,
+        weight,
+      }
+    })
+    .filter((lineItem): lineItem is NonNullable<typeof lineItem> => lineItem !== null)
+
+  return mappedLineItems.length > 0 ? mappedLineItems : undefined
+}
+
+const buildShopifyDraftOrderInput = (input: ShopifyDraftOrderInput) => {
+  const tags = toArray<string>(input.tags)
+    .map(tag => tag.trim())
+    .filter(Boolean)
+
+  const shippingLineTitle = trimOrNull(input.shippingLine?.title)
+  const shippingLinePrice = input.shippingLine?.price
+
+  return {
+    lineItems: mapShopifyDraftOrderLineItems(input.lineItems),
+    email: trimOrNull(input.email) ?? undefined,
+    note: trimOrNull(input.note) ?? undefined,
+    tags: tags.length > 0 ? tags : undefined,
+    taxExempt: input.taxExempt ?? undefined,
+    reserveInventoryUntil: trimOrNull(input.reserveInventoryUntil) ?? undefined,
+    billingAddress: mapShopifyDraftOrderAddress(input.billingAddress),
+    shippingAddress: mapShopifyDraftOrderAddress(input.shippingAddress),
+    shippingLine:
+      shippingLineTitle &&
+      typeof shippingLinePrice === "number" &&
+      Number.isFinite(shippingLinePrice)
+        ? {
+            title: shippingLineTitle,
+            price: toShopifyMoneyString(shippingLinePrice),
+          }
+        : undefined,
+    appliedDiscount: mapShopifyDraftOrderAppliedDiscount(input.appliedDiscount),
+    customAttributes: mapShopifyDraftOrderAttributes(input.customAttributes),
+  }
+}
+
+const buildShopifyDraftOrderUpdateInput = (input: ShopifyDraftOrderInput) => {
+  const tags = mapExplicitStringArrayUpdate(input, "tags")
+  const shippingLineTitle = trimOrNull(input.shippingLine?.title)
+  const shippingLinePrice = input.shippingLine?.price
+  const customAttributes =
+    hasOwnKey(input, "customAttributes") && input.customAttributes !== undefined
+      ? mapShopifyDraftOrderAttributes(input.customAttributes, {
+          preserveExplicitEmpty: true,
+        })
+      : undefined
+
+  return {
+    lineItems: mapShopifyDraftOrderLineItems(input.lineItems),
+    email: mapExplicitStringUpdate(input, "email"),
+    note: mapExplicitStringUpdate(input, "note"),
+    tags,
+    taxExempt: input.taxExempt ?? undefined,
+    reserveInventoryUntil: mapExplicitStringUpdate(input, "reserveInventoryUntil"),
+    billingAddress: mapShopifyDraftOrderAddress(input.billingAddress),
+    shippingAddress: mapShopifyDraftOrderAddress(input.shippingAddress),
+    shippingLine:
+      shippingLineTitle &&
+      typeof shippingLinePrice === "number" &&
+      Number.isFinite(shippingLinePrice)
+        ? {
+            title: shippingLineTitle,
+            price: toShopifyMoneyString(shippingLinePrice),
+          }
+        : undefined,
+    appliedDiscount: mapShopifyDraftOrderAppliedDiscount(input.appliedDiscount),
+    customAttributes,
+  }
+}
+
+const mapShopifyDraftOrderEmailInput = (
+  email: ShopifyDraftOrderInvoiceSendInput["email"] | undefined,
+) => {
+  if (!email) {
+    return undefined
+  }
+
+  const mappedEmail = {
+    to: trimOrNull(email.to) ?? undefined,
+    subject: trimOrNull(email.subject) ?? undefined,
+    customMessage: trimOrNull(email.customMessage) ?? undefined,
+  }
+
+  return Object.values(mappedEmail).some(value => value !== undefined) ? mappedEmail : undefined
+}
+
+const buildShopifyOrderUpdateInput = (input: ShopifyOrderUpdateInput) => {
+  const tags = mapExplicitStringArrayUpdate(input, "tags")
+  const customAttributes =
+    hasOwnKey(input, "customAttributes") && input.customAttributes !== undefined
+      ? mapShopifyDraftOrderAttributes(input.customAttributes, {
+          preserveExplicitEmpty: true,
+        })
+      : undefined
+
+  return {
+    id: input.orderId,
+    customAttributes,
+    email: mapExplicitStringUpdate(input, "email"),
+    note: mapExplicitStringUpdate(input, "note"),
+    phone: mapExplicitStringUpdate(input, "phone"),
+    poNumber: mapExplicitStringUpdate(input, "poNumber"),
+    shippingAddress: mapShopifyDraftOrderAddress(input.shippingAddress),
+    tags,
+  }
+}
+
+const mapFulfillmentOrderLineItemsInput = (
+  lineItems: ShopifyFulfillmentOrderLineItemInput[] | undefined,
+) => {
+  const mappedLineItems = toArray<ShopifyFulfillmentOrderLineItemInput>(lineItems)
+    .map(lineItem => {
+      const id = trimOrNull(lineItem.id)
+      if (!id) {
+        return null
+      }
+
+      return {
+        id,
+        quantity: Math.max(1, Math.round(lineItem.quantity)),
+      }
+    })
+    .filter((lineItem): lineItem is { id: string; quantity: number } => lineItem !== null)
+
+  return mappedLineItems.length > 0 ? mappedLineItems : undefined
 }
 
 const getTimeZoneParts = (date: Date, timeZone: string) => {
@@ -1308,6 +2843,1344 @@ export const loadShopifyStoreSalesSummary = async (
   }
 }
 
+/** Queries Shopify products with one page of lightweight catalog summaries. */
+export const queryShopifyCatalogProducts = async (
+  store: ShopifyStoreConfig,
+  input?: {
+    query?: string
+    first?: number
+    after?: string
+  },
+): Promise<ShopifyCatalogProductsQuerySnapshot> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyCatalogProductsQuery>(SHOPIFY_CATALOG_PRODUCTS_QUERY, {
+      variables: {
+        first: Math.min(Math.max(Math.round(toNumber(input?.first, 25)), 1), 50),
+        after: trimOrNull(input?.after),
+        query: trimOrNull(input?.query),
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const page = result.data?.products
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: timeZone,
+    query: trimOrNull(input?.query),
+    pageInfo: {
+      hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+      endCursor: trimOrNull(page?.pageInfo?.endCursor),
+    },
+    products: mapShopifyCatalogProducts(
+      toArray<NonNullable<NonNullable<ShopifyCatalogProductsQuery["products"]>["nodes"]>[number]>(
+        page?.nodes,
+      ),
+    ),
+  }
+}
+
+/** Queries one page of Shopify variant summaries. */
+const queryShopifyCatalogVariantsPage = async (
+  client: ShopifyGraphQLClient,
+  input?: {
+    query?: string
+    first?: number
+    after?: string
+  },
+) => {
+  const result = await client.request<ShopifyCatalogVariantsQuery>(SHOPIFY_CATALOG_VARIANTS_QUERY, {
+    variables: {
+      first: Math.min(Math.max(Math.round(toNumber(input?.first, 25)), 1), 50),
+      after: trimOrNull(input?.after),
+      query: trimOrNull(input?.query),
+    },
+  })
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  return result.data?.productVariants
+}
+
+/** Queries Shopify variant summaries, optionally continuing through all remaining pages. */
+export const queryShopifyCatalogVariants = async (
+  store: ShopifyStoreConfig,
+  input?: {
+    query?: string
+    first?: number
+    allPages?: boolean
+    after?: string
+  },
+): Promise<ShopifyCatalogVariantsQuerySnapshot> => {
+  const client = await createShopifyClient(store)
+  const query = trimOrNull(input?.query)
+  const [shop, firstPage] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    queryShopifyCatalogVariantsPage(client, {
+      query: query ?? undefined,
+      first: input?.first,
+      after: input?.after,
+    }),
+  ])
+  const currencyCode = trimOrNull(shop?.currencyCode) ?? DEFAULT_PLUGIN_CONFIG.currency
+  const variants = toArray<
+    NonNullable<NonNullable<ShopifyCatalogVariantsQuery["productVariants"]>["nodes"]>[number]
+  >(firstPage?.nodes)
+  let hasNextPage = Boolean(firstPage?.pageInfo?.hasNextPage)
+  let endCursor = trimOrNull(firstPage?.pageInfo?.endCursor)
+
+  if (input?.allPages) {
+    while (hasNextPage) {
+      const page = await queryShopifyCatalogVariantsPage(client, {
+        query: query ?? undefined,
+        first: input?.first,
+        after: endCursor ?? undefined,
+      })
+      variants.push(
+        ...toArray<
+          NonNullable<NonNullable<ShopifyCatalogVariantsQuery["productVariants"]>["nodes"]>[number]
+        >(page?.nodes),
+      )
+      hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+      endCursor = trimOrNull(page?.pageInfo?.endCursor)
+    }
+  }
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    query,
+    pageInfo: {
+      hasNextPage: input?.allPages ? false : hasNextPage,
+      endCursor,
+    },
+    variants: mapShopifyCatalogVariants(variants, currencyCode),
+  }
+}
+
+/** Queries Shopify draft orders with one page of operational draft-order summaries. */
+export const queryShopifyDraftOrders = async (
+  store: ShopifyStoreConfig,
+  input?: ShopifyDraftOrdersQueryInput,
+): Promise<ShopifyDraftOrdersQuerySnapshot> => {
+  const client = await createShopifyClient(store)
+  const [shop, draftOrderResult] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyDraftOrdersQuery>(SHOPIFY_DRAFT_ORDERS_QUERY, {
+      variables: {
+        first: Math.min(Math.max(Math.round(toNumber(input?.first, 25)), 1), 50),
+        after: trimOrNull(input?.after),
+        query: trimOrNull(input?.query),
+        reverse: input?.reverse ?? true,
+      },
+    }),
+  ])
+
+  if (draftOrderResult.errors) {
+    throw new Error(formatShopifyErrors(draftOrderResult.errors))
+  }
+
+  const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const currencyCode = trimOrNull(shop?.currencyCode) ?? DEFAULT_PLUGIN_CONFIG.currency
+  const page = draftOrderResult.data?.draftOrders
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: timeZone,
+    query: trimOrNull(input?.query),
+    pageInfo: {
+      hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+      endCursor: trimOrNull(page?.pageInfo?.endCursor),
+    },
+    draftOrders: mapShopifyDraftOrders(
+      toArray<NonNullable<NonNullable<ShopifyDraftOrdersQuery["draftOrders"]>["nodes"]>[number]>(
+        page?.nodes,
+      ),
+      currencyCode,
+    ),
+  }
+}
+
+/** Queries Shopify fulfillment orders with one page of operational fulfillment-order summaries. */
+export const queryShopifyFulfillmentOrders = async (
+  store: ShopifyStoreConfig,
+  input?: ShopifyFulfillmentOrdersQueryInput,
+): Promise<ShopifyFulfillmentOrdersQuerySnapshot> => {
+  const client = await createShopifyClient(store)
+  const [shop, fulfillmentOrderResult] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyFulfillmentOrdersQuery>(SHOPIFY_FULFILLMENT_ORDERS_QUERY, {
+      variables: {
+        first: Math.min(Math.max(Math.round(toNumber(input?.first, 25)), 1), 50),
+        after: trimOrNull(input?.after),
+        query: trimOrNull(input?.query),
+        reverse: input?.reverse ?? true,
+        includeClosed: Boolean(input?.includeClosed),
+      },
+    }),
+  ])
+
+  if (fulfillmentOrderResult.errors) {
+    throw new Error(formatShopifyErrors(fulfillmentOrderResult.errors))
+  }
+
+  const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const page = fulfillmentOrderResult.data?.fulfillmentOrders
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: timeZone,
+    query: trimOrNull(input?.query),
+    includeClosed: Boolean(input?.includeClosed),
+    pageInfo: {
+      hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+      endCursor: trimOrNull(page?.pageInfo?.endCursor),
+    },
+    fulfillmentOrders: toArray<
+      NonNullable<NonNullable<ShopifyFulfillmentOrdersQuery["fulfillmentOrders"]>["nodes"]>[number]
+    >(page?.nodes)
+      .map(fulfillmentOrder => mapShopifyFulfillmentOrderSummary(fulfillmentOrder))
+      .filter(
+        (fulfillmentOrder): fulfillmentOrder is ShopifyFulfillmentOrderSummarySnapshot =>
+          fulfillmentOrder !== null,
+      ),
+  }
+}
+
+/** Queries Shopify orders with one page of operational order summaries. */
+export const queryShopifyOrders = async (
+  store: ShopifyStoreConfig,
+  input?: {
+    query?: string
+    first?: number
+    after?: string
+    reverse?: boolean
+  },
+): Promise<ShopifyOrdersQuerySnapshot> => {
+  const client = await createShopifyClient(store)
+  const [shop, orderResult] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyOrderSummariesPage>(SHOPIFY_ORDER_SUMMARIES_QUERY, {
+      variables: {
+        first: Math.min(Math.max(Math.round(toNumber(input?.first, 25)), 1), 50),
+        after: trimOrNull(input?.after),
+        query: trimOrNull(input?.query),
+        reverse: input?.reverse ?? true,
+      },
+    }),
+  ])
+
+  if (orderResult.errors) {
+    throw new Error(formatShopifyErrors(orderResult.errors))
+  }
+
+  const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const page = orderResult.data?.orders
+  const orders = toArray<
+    NonNullable<NonNullable<ShopifyOrderSummariesPage["orders"]>["nodes"]>[number]
+  >(page?.nodes)
+    .map(order => {
+      const id = trimOrNull(order?.id)
+      const createdAt = trimOrNull(order?.createdAt)
+      if (!id || !createdAt) {
+        return null
+      }
+
+      const currencyCode =
+        trimOrNull(order?.currentTotalPriceSet?.shopMoney?.currencyCode) ??
+        trimOrNull(shop?.currencyCode) ??
+        DEFAULT_PLUGIN_CONFIG.currency
+
+      return {
+        id,
+        name: trimOrNull(order?.name) ?? id,
+        createdAt,
+        displayFinancialStatus: trimOrNull(order?.displayFinancialStatus) ?? "unknown",
+        displayFulfillmentStatus: trimOrNull(order?.displayFulfillmentStatus) ?? "unknown",
+        unitsSold: toNumber(order?.currentSubtotalLineItemsQuantity),
+        totalPrice: toShopifyMoneyAmount(order?.currentTotalPriceSet?.shopMoney?.amount),
+        currencyCode,
+        customerName: trimOrNull(order?.customer?.displayName),
+        customerEmail: trimOrNull(order?.customer?.email) ?? trimOrNull(order?.email),
+      }
+    })
+    .filter((order): order is ShopifyOrderSummarySnapshot => order !== null)
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: timeZone,
+    query: trimOrNull(input?.query),
+    pageInfo: {
+      hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+      endCursor: trimOrNull(page?.pageInfo?.endCursor),
+    },
+    orders,
+  }
+}
+
+const collectPaginatedNodes = async <TNode>(
+  initialNodes: TNode[],
+  initialPageInfo: ShopifyConnectionPageInfo | null | undefined,
+  loadPage: (after: string | null) => Promise<{
+    nodes: TNode[]
+    pageInfo: ShopifyConnectionPageInfo | null | undefined
+  }>,
+) => {
+  const nodes = [...initialNodes]
+  let hasNextPage = Boolean(initialPageInfo?.hasNextPage)
+  let after = initialPageInfo?.endCursor ?? null
+
+  while (hasNextPage) {
+    const page = await loadPage(after)
+    nodes.push(...page.nodes)
+    hasNextPage = Boolean(page.pageInfo?.hasNextPage)
+    after = page.pageInfo?.endCursor ?? null
+  }
+
+  return nodes
+}
+
+const loadShopifyOrderLineItems = async (
+  client: ShopifyGraphQLClient,
+  orderId: string,
+  initialLineItems: ShopifyDetailedOrderLineItem[],
+  initialPageInfo: ShopifyConnectionPageInfo | null | undefined,
+) =>
+  collectPaginatedNodes(initialLineItems, initialPageInfo, async after => {
+    const result = await client.request<ShopifyOrderLineItemsPage>(
+      SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY,
+      {
+        variables: {
+          orderId,
+          after,
+        },
+      },
+    )
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.order?.lineItems
+    return {
+      pageInfo: page?.pageInfo,
+      nodes: toArray<ShopifyPaginatedOrderLineItem>(page?.nodes),
+    }
+  })
+
+const loadShopifyOrderTransactions = async (
+  client: ShopifyGraphQLClient,
+  orderId: string,
+  initialTransactions: ShopifyDetailedOrderTransaction[],
+  initialPageInfo: ShopifyConnectionPageInfo | null | undefined,
+) =>
+  collectPaginatedNodes(initialTransactions, initialPageInfo, async after => {
+    const result = await client.request<ShopifyOrderTransactionsPage>(
+      SHOPIFY_ORDER_TRANSACTIONS_PAGE_QUERY,
+      {
+        variables: {
+          orderId,
+          after,
+        },
+      },
+    )
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.order?.transactions
+    return {
+      pageInfo: page?.pageInfo,
+      nodes: toArray<ShopifyPaginatedOrderTransaction>(page?.nodes),
+    }
+  })
+
+const loadShopifyFulfillmentOrderLineItems = async (
+  client: ShopifyGraphQLClient,
+  fulfillmentOrderId: string,
+  initialLineItems: ShopifyDetailedFulfillmentOrderLineItem[],
+  initialPageInfo: ShopifyConnectionPageInfo | null | undefined,
+) =>
+  collectPaginatedNodes(initialLineItems, initialPageInfo, async after => {
+    const result = await client.request<ShopifyFulfillmentOrderLineItemsPage>(
+      SHOPIFY_FULFILLMENT_ORDER_LINE_ITEMS_PAGE_QUERY,
+      {
+        variables: {
+          fulfillmentOrderId,
+          after,
+        },
+      },
+    )
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.fulfillmentOrder?.lineItems
+    return {
+      pageInfo: page?.pageInfo,
+      nodes: toArray<ShopifyDetailedFulfillmentOrderLineItem>(page?.nodes),
+    }
+  })
+
+const loadShopifyReturnableFulfillmentLineItems = async (
+  client: ShopifyGraphQLClient,
+  returnableFulfillmentId: string,
+  initialLineItems: ShopifyDetailedReturnableFulfillmentLineItem[],
+  initialPageInfo: ShopifyConnectionPageInfo | null | undefined,
+) =>
+  collectPaginatedNodes(initialLineItems, initialPageInfo, async after => {
+    const result = await client.request<ShopifyReturnableFulfillmentLineItemsPage>(
+      SHOPIFY_RETURNABLE_FULFILLMENT_LINE_ITEMS_PAGE_QUERY,
+      {
+        variables: {
+          returnableFulfillmentId,
+          after,
+        },
+      },
+    )
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.returnableFulfillment?.returnableFulfillmentLineItems
+    return {
+      pageInfo: page?.pageInfo,
+      nodes: toArray<ShopifyDetailedReturnableFulfillmentLineItem>(page?.nodes),
+    }
+  })
+
+/** Queries returnable fulfillment line items for one Shopify order. */
+export const queryShopifyReturnableFulfillments = async (
+  store: ShopifyStoreConfig,
+  orderId: string,
+): Promise<ShopifyReturnableFulfillmentsSnapshot> => {
+  const client = await createShopifyClient(store)
+  const normalizedOrderId = trimOrNull(orderId)
+  const shopMetadata = await fetchShopifyShopMetadata(client)
+  if (!normalizedOrderId) {
+    return {
+      source: "shopify",
+      retrievedAtIso: new Date().toISOString(),
+      storeName: shopMetadata?.name ?? store.name,
+      timezone: coerceShopTimeZone(shopMetadata?.ianaTimezone),
+      orderId,
+      returnableFulfillments: [],
+    }
+  }
+
+  const shop = shopMetadata
+  const returnableFulfillments: ShopifyReturnableFulfillmentNode[] = []
+  let hasNextPage = true
+  let after: string | null = null
+
+  while (hasNextPage) {
+    const result: ShopifyGraphQLResponse<ShopifyReturnableFulfillmentsQuery> =
+      await client.request<ShopifyReturnableFulfillmentsQuery>(
+        SHOPIFY_RETURNABLE_FULFILLMENTS_QUERY,
+        {
+          variables: {
+            orderId: normalizedOrderId,
+            after,
+            first: 25,
+            lineItemsFirst: 100,
+          },
+        },
+      )
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page: ShopifyReturnableFulfillmentsQuery["returnableFulfillments"] | undefined =
+      result.data?.returnableFulfillments
+
+    for (const returnableFulfillment of toArray<ShopifyReturnableFulfillmentNode>(page?.nodes)) {
+      const returnableFulfillmentId = trimOrNull(returnableFulfillment?.id)
+      const initialLineItems = toArray<ShopifyDetailedReturnableFulfillmentLineItem>(
+        returnableFulfillment?.returnableFulfillmentLineItems?.nodes,
+      )
+      const lineItems = returnableFulfillmentId
+        ? await loadShopifyReturnableFulfillmentLineItems(
+            client,
+            returnableFulfillmentId,
+            initialLineItems,
+            returnableFulfillment?.returnableFulfillmentLineItems?.pageInfo,
+          )
+        : initialLineItems
+
+      returnableFulfillments.push({
+        ...returnableFulfillment,
+        returnableFulfillmentLineItems: {
+          nodes: lineItems,
+        },
+      })
+    }
+
+    hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+    after = page?.pageInfo?.endCursor ?? null
+  }
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: normalizedOrderId,
+    returnableFulfillments: mapShopifyReturnableFulfillments(returnableFulfillments),
+  }
+}
+
+const loadShopifyOrderFulfillmentOrders = async (client: ShopifyGraphQLClient, orderId: string) => {
+  try {
+    const fulfillmentOrders: ShopifyOrderDetailFulfillmentOrder[] = []
+    let hasNextPage = true
+    let after: string | null = null
+
+    while (hasNextPage) {
+      const result: ShopifyGraphQLResponse<ShopifyOrderFulfillmentOrdersQuery> =
+        await client.request<ShopifyOrderFulfillmentOrdersQuery>(
+          SHOPIFY_ORDER_FULFILLMENT_ORDERS_QUERY,
+          {
+            variables: {
+              orderId,
+              after,
+            },
+          },
+        )
+
+      if (result.errors) {
+        throw new Error(formatShopifyErrors(result.errors))
+      }
+
+      const page:
+        | NonNullable<ShopifyOrderFulfillmentOrdersQuery["order"]>["fulfillmentOrders"]
+        | undefined = result.data?.order?.fulfillmentOrders
+
+      for (const fulfillmentOrder of toArray<ShopifyOrderDetailFulfillmentOrder>(page?.nodes)) {
+        const fulfillmentOrderId = trimOrNull(fulfillmentOrder?.id)
+        const initialLineItems = toArray<ShopifyDetailedFulfillmentOrderLineItem>(
+          fulfillmentOrder?.lineItems?.nodes,
+        )
+        const lineItems = fulfillmentOrderId
+          ? await loadShopifyFulfillmentOrderLineItems(
+              client,
+              fulfillmentOrderId,
+              initialLineItems,
+              fulfillmentOrder?.lineItems?.pageInfo,
+            )
+          : initialLineItems
+
+        fulfillmentOrders.push({
+          ...fulfillmentOrder,
+          lineItems: {
+            nodes: lineItems,
+          },
+        })
+      }
+
+      hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+      after = page?.pageInfo?.endCursor ?? null
+    }
+
+    return {
+      fulfillmentOrders: mapShopifyFulfillmentOrders(fulfillmentOrders),
+      fulfillmentOrdersErrorMessage: undefined,
+    }
+  } catch (error) {
+    return {
+      fulfillmentOrders: [],
+      fulfillmentOrdersErrorMessage:
+        error instanceof Error ? error.message : "Failed to load Shopify fulfillment orders.",
+    }
+  }
+}
+
+/** Loads one Shopify order with operational detail needed for fulfillment and refund workflows. */
+export const getShopifyOrder = async (
+  store: ShopifyStoreConfig,
+  orderId: string,
+): Promise<ShopifyOrderDetailSnapshot | null> => {
+  const client = await createShopifyClient(store)
+  const normalizedOrderId = trimOrNull(orderId)
+  if (!normalizedOrderId) {
+    return null
+  }
+
+  const [shop, orderResult] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyOrderDetailQuery>(SHOPIFY_ORDER_DETAIL_QUERY, {
+      variables: {
+        orderId: normalizedOrderId,
+      },
+    }),
+  ])
+
+  if (orderResult.errors) {
+    throw new Error(formatShopifyErrors(orderResult.errors))
+  }
+
+  const order = orderResult.data?.order
+  const resolvedOrderId = trimOrNull(order?.id)
+  const createdAt = trimOrNull(order?.createdAt)
+  if (!resolvedOrderId || !createdAt) {
+    return null
+  }
+
+  const currencyCode =
+    trimOrNull(order?.currentTotalPriceSet?.shopMoney?.currencyCode) ??
+    trimOrNull(order?.totalRefundedSet?.shopMoney?.currencyCode) ??
+    trimOrNull(shop?.currencyCode) ??
+    DEFAULT_PLUGIN_CONFIG.currency
+  const [lineItems, transactions, fulfillmentOrdersResult] = await Promise.all([
+    loadShopifyOrderLineItems(
+      client,
+      resolvedOrderId,
+      toArray<ShopifyDetailedOrderLineItem>(order?.lineItems?.nodes),
+      order?.lineItems?.pageInfo,
+    ),
+    loadShopifyOrderTransactions(
+      client,
+      resolvedOrderId,
+      toArray<ShopifyDetailedOrderTransaction>(order?.transactions?.nodes),
+      order?.transactions?.pageInfo,
+    ),
+    loadShopifyOrderFulfillmentOrders(client, resolvedOrderId),
+  ])
+  const { fulfillmentOrders, fulfillmentOrdersErrorMessage } = fulfillmentOrdersResult
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: resolvedOrderId,
+    name: trimOrNull(order?.name) ?? resolvedOrderId,
+    createdAt,
+    cancelledAt: trimOrNull(order?.cancelledAt),
+    cancelReason: trimOrNull(order?.cancelReason),
+    displayFinancialStatus: trimOrNull(order?.displayFinancialStatus) ?? "unknown",
+    displayFulfillmentStatus: trimOrNull(order?.displayFulfillmentStatus) ?? "unknown",
+    note: trimOrNull(order?.note),
+    tags: toArray<string>(order?.tags)
+      .map(tag => tag.trim())
+      .filter(Boolean),
+    unitsSold: toNumber(order?.currentSubtotalLineItemsQuantity),
+    totalPrice: toShopifyMoneyAmount(order?.currentTotalPriceSet?.shopMoney?.amount),
+    totalRefunded: toShopifyMoneyAmount(order?.totalRefundedSet?.shopMoney?.amount),
+    currencyCode,
+    customerName: trimOrNull(order?.customer?.displayName),
+    customerEmail: trimOrNull(order?.customer?.email) ?? trimOrNull(order?.email),
+    lineItems: mapShopifyOrderLineItems(lineItems),
+    transactions: mapShopifyOrderTransactions(transactions, currencyCode),
+    fulfillmentOrders,
+    fulfillmentOrdersErrorMessage,
+  }
+}
+
+/** Creates a Shopify draft order from explicit draft-order input. */
+export const createShopifyDraftOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyDraftOrderCreateInput,
+): Promise<ShopifyDraftOrderActionResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyDraftOrderCreateMutation>(SHOPIFY_DRAFT_ORDER_CREATE_MUTATION, {
+      variables: {
+        input: buildShopifyDraftOrderInput(input),
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.draftOrderCreate
+  const currencyCode = trimOrNull(shop?.currencyCode) ?? DEFAULT_PLUGIN_CONFIG.currency
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    draftOrder: mapShopifyDraftOrderSummary(payload?.draftOrder, currencyCode),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Updates a Shopify draft order using explicit draft-order input. */
+export const updateShopifyDraftOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyDraftOrderUpdateInput,
+): Promise<ShopifyDraftOrderActionResult> => {
+  const client = await createShopifyClient(store)
+  const { draftOrderId, ...draftOrderInput } = input
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyDraftOrderUpdateMutation>(SHOPIFY_DRAFT_ORDER_UPDATE_MUTATION, {
+      variables: {
+        id: draftOrderId,
+        input: buildShopifyDraftOrderUpdateInput(draftOrderInput),
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.draftOrderUpdate
+  const currencyCode = trimOrNull(shop?.currencyCode) ?? DEFAULT_PLUGIN_CONFIG.currency
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    draftOrder: mapShopifyDraftOrderSummary(payload?.draftOrder, currencyCode),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Sends a Shopify draft-order invoice using explicit email input when provided. */
+export const sendShopifyDraftOrderInvoice = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyDraftOrderInvoiceSendInput,
+): Promise<ShopifyDraftOrderActionResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyDraftOrderInvoiceSendMutation>(
+      SHOPIFY_DRAFT_ORDER_INVOICE_SEND_MUTATION,
+      {
+        variables: {
+          id: input.draftOrderId,
+          emailInput: mapShopifyDraftOrderEmailInput(input.email),
+        },
+      },
+    ),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.draftOrderInvoiceSend
+  const currencyCode = trimOrNull(shop?.currencyCode) ?? DEFAULT_PLUGIN_CONFIG.currency
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    draftOrder: mapShopifyDraftOrderSummary(payload?.draftOrder, currencyCode),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Completes a Shopify draft order and returns the resulting order linkage when available. */
+export const completeShopifyDraftOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyDraftOrderCompleteInput,
+): Promise<ShopifyDraftOrderActionResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyDraftOrderCompleteMutation>(SHOPIFY_DRAFT_ORDER_COMPLETE_MUTATION, {
+      variables: {
+        id: input.draftOrderId,
+        paymentGatewayId: trimOrNull(input.paymentGatewayId) ?? undefined,
+        sourceName: trimOrNull(input.sourceName) ?? undefined,
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.draftOrderComplete
+  const currencyCode = trimOrNull(shop?.currencyCode) ?? DEFAULT_PLUGIN_CONFIG.currency
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    draftOrder: mapShopifyDraftOrderSummary(payload?.draftOrder, currencyCode),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Places a Shopify fulfillment order on hold. */
+export const holdShopifyFulfillmentOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyFulfillmentOrderHoldInput,
+): Promise<ShopifyFulfillmentOrderActionResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyFulfillmentOrderHoldMutation>(SHOPIFY_FULFILLMENT_ORDER_HOLD_MUTATION, {
+      variables: {
+        id: input.fulfillmentOrderId,
+        fulfillmentHold: {
+          reason: input.reason,
+          reasonNotes: trimOrNull(input.reasonNotes) ?? undefined,
+          notifyMerchant: input.notifyMerchant ?? undefined,
+          handle: trimOrNull(input.handle) ?? undefined,
+          externalId: trimOrNull(input.externalId) ?? undefined,
+          fulfillmentOrderLineItems: mapFulfillmentOrderLineItemsInput(
+            input.fulfillmentOrderLineItems,
+          ),
+        },
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.fulfillmentOrderHold
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    fulfillmentOrder: mapShopifyFulfillmentOrderSummary(payload?.fulfillmentOrder),
+    originalFulfillmentOrder: null,
+    movedFulfillmentOrder: null,
+    remainingFulfillmentOrder: mapShopifyFulfillmentOrderSummary(
+      payload?.remainingFulfillmentOrder,
+    ),
+    fulfillmentHold:
+      mapShopifyFulfillmentHolds(payload?.fulfillmentHold ? [payload.fulfillmentHold] : [])[0] ??
+      null,
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Releases one or more holds from a Shopify fulfillment order. */
+export const releaseHoldShopifyFulfillmentOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyFulfillmentOrderReleaseHoldInput,
+): Promise<ShopifyFulfillmentOrderActionResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyFulfillmentOrderReleaseHoldMutation>(
+      SHOPIFY_FULFILLMENT_ORDER_RELEASE_HOLD_MUTATION,
+      {
+        variables: {
+          id: input.fulfillmentOrderId,
+          holdIds:
+            input.holdIds && input.holdIds.length > 0
+              ? input.holdIds.map(holdId => holdId.trim()).filter(Boolean)
+              : undefined,
+          externalId: trimOrNull(input.externalId) ?? undefined,
+        },
+      },
+    ),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.fulfillmentOrderReleaseHold
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    fulfillmentOrder: mapShopifyFulfillmentOrderSummary(payload?.fulfillmentOrder),
+    originalFulfillmentOrder: null,
+    movedFulfillmentOrder: null,
+    remainingFulfillmentOrder: null,
+    fulfillmentHold: null,
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Moves a Shopify fulfillment order to a new location. */
+export const moveShopifyFulfillmentOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyFulfillmentOrderMoveInput,
+): Promise<ShopifyFulfillmentOrderActionResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyFulfillmentOrderMoveMutation>(SHOPIFY_FULFILLMENT_ORDER_MOVE_MUTATION, {
+      variables: {
+        id: input.fulfillmentOrderId,
+        newLocationId: input.newLocationId,
+        fulfillmentOrderLineItems: mapFulfillmentOrderLineItemsInput(
+          input.fulfillmentOrderLineItems,
+        ),
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.fulfillmentOrderMove
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    fulfillmentOrder: null,
+    originalFulfillmentOrder: mapShopifyFulfillmentOrderSummary(payload?.originalFulfillmentOrder),
+    movedFulfillmentOrder: mapShopifyFulfillmentOrderSummary(payload?.movedFulfillmentOrder),
+    remainingFulfillmentOrder: mapShopifyFulfillmentOrderSummary(
+      payload?.remainingFulfillmentOrder,
+    ),
+    fulfillmentHold: null,
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Cancels a Shopify order using explicit cancellation input. */
+export const cancelShopifyOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyOrderCancelInput,
+): Promise<ShopifyOrderCancelResult> => {
+  const client = await createShopifyClient(store)
+  const shop = await fetchShopifyShopMetadata(client)
+  const result = await client.request<ShopifyOrderCancelMutation>(SHOPIFY_ORDER_CANCEL_MUTATION, {
+    variables: {
+      orderId: input.orderId,
+      notifyCustomer: input.notifyCustomer ?? undefined,
+      refundMethod: {
+        originalPaymentMethodsRefund: Boolean(input.refundMethod.originalPaymentMethodsRefund),
+      },
+      restock: Boolean(input.restock),
+      reason: input.reason,
+      staffNote: trimOrNull(input.staffNote) ?? undefined,
+    },
+  })
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.orderCancel
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: input.orderId,
+    jobId: trimOrNull(payload?.job?.id),
+    jobDone: typeof payload?.job?.done === "boolean" ? payload.job.done : null,
+    orderCancelUserErrors: mapShopifyMutationUserErrors(payload?.orderCancelUserErrors),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Captures payment on a Shopify order using an authorized parent transaction. */
+export const captureShopifyOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyOrderCaptureInput,
+): Promise<ShopifyOrderCaptureResult> => {
+  const client = await createShopifyClient(store)
+  const shop = await fetchShopifyShopMetadata(client)
+  const result = await client.request<ShopifyOrderCaptureMutation>(SHOPIFY_ORDER_CAPTURE_MUTATION, {
+    variables: {
+      input: {
+        id: input.orderId,
+        parentTransactionId: input.parentTransactionId,
+        amount: toShopifyMoneyString(input.amount),
+        currency: trimOrNull(input.currency) ?? undefined,
+        finalCapture: input.finalCapture ?? undefined,
+      },
+    },
+  })
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.orderCapture
+  const transaction = payload?.transaction
+  const order = transaction?.order
+  const currencyCode =
+    trimOrNull(transaction?.amountSet?.presentmentMoney?.currencyCode) ??
+    trimOrNull(order?.totalCapturable?.currencyCode) ??
+    trimOrNull(input.currency) ??
+    trimOrNull(shop?.currencyCode) ??
+    DEFAULT_PLUGIN_CONFIG.currency
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: trimOrNull(order?.id) ?? input.orderId,
+    transactionId: trimOrNull(transaction?.id),
+    transactionKind: trimOrNull(transaction?.kind),
+    transactionStatus: trimOrNull(transaction?.status),
+    processedAt: trimOrNull(transaction?.processedAt),
+    amount: toShopifyMoneyAmount(transaction?.amountSet?.presentmentMoney?.amount),
+    currencyCode,
+    parentTransactionId: trimOrNull(transaction?.parentTransaction?.id),
+    capturable: typeof order?.capturable === "boolean" ? order.capturable : null,
+    totalCapturable: toShopifyMoneyAmount(order?.totalCapturable?.amount),
+    totalCapturableCurrencyCode: trimOrNull(order?.totalCapturable?.currencyCode) ?? currencyCode,
+    multiCapturable:
+      typeof transaction?.multiCapturable === "boolean" ? transaction.multiCapturable : null,
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Updates mutable Shopify order fields such as note, tags, contact, and shipping address. */
+export const updateShopifyOrder = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyOrderUpdateInput,
+): Promise<ShopifyOrderUpdateResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyOrderUpdateMutation>(SHOPIFY_ORDER_UPDATE_MUTATION, {
+      variables: {
+        input: buildShopifyOrderUpdateInput(input),
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.orderUpdate
+  const order = payload?.order
+  const currencyCode =
+    trimOrNull(order?.currentTotalPriceSet?.shopMoney?.currencyCode) ??
+    trimOrNull(shop?.currencyCode) ??
+    DEFAULT_PLUGIN_CONFIG.currency
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: trimOrNull(order?.id) ?? input.orderId,
+    name: trimOrNull(order?.name),
+    displayFinancialStatus: trimOrNull(order?.displayFinancialStatus),
+    displayFulfillmentStatus: trimOrNull(order?.displayFulfillmentStatus),
+    note: trimOrNull(order?.note),
+    email: trimOrNull(order?.email),
+    phone: trimOrNull(order?.phone),
+    poNumber: trimOrNull(order?.poNumber),
+    tags: toArray<string>(order?.tags)
+      .map(tag => tag.trim())
+      .filter(Boolean),
+    customAttributes: mapShopifyOrderUpdateAttributes(order?.customAttributes),
+    shippingAddress: mapShopifyOrderUpdateAddress(order?.shippingAddress),
+    totalPrice: toShopifyMoneyAmount(order?.currentTotalPriceSet?.shopMoney?.amount),
+    currencyCode,
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Begins a Shopify order-edit session and returns the calculated order context. */
+export const beginShopifyOrderEdit = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyOrderEditBeginInput,
+): Promise<ShopifyOrderEditBeginResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyOrderEditBeginMutation>(SHOPIFY_ORDER_EDIT_BEGIN_MUTATION, {
+      variables: {
+        id: input.orderId,
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.orderEditBegin
+  const calculatedOrder = payload?.calculatedOrder
+  const originalOrder = calculatedOrder?.originalOrder
+  const currencyCode =
+    trimOrNull(calculatedOrder?.subtotalPriceSet?.presentmentMoney?.currencyCode) ??
+    trimOrNull(calculatedOrder?.totalOutstandingSet?.presentmentMoney?.currencyCode) ??
+    trimOrNull(shop?.currencyCode) ??
+    DEFAULT_PLUGIN_CONFIG.currency
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: trimOrNull(originalOrder?.id) ?? input.orderId,
+    orderName: trimOrNull(originalOrder?.name),
+    orderEditSessionId: trimOrNull(payload?.orderEditSession?.id),
+    calculatedOrderId: trimOrNull(calculatedOrder?.id),
+    subtotalLineItemsQuantity: toNumber(calculatedOrder?.subtotalLineItemsQuantity),
+    subtotalPrice: toShopifyMoneyAmount(
+      calculatedOrder?.subtotalPriceSet?.presentmentMoney?.amount,
+    ),
+    totalOutstanding: toShopifyMoneyAmount(
+      calculatedOrder?.totalOutstandingSet?.presentmentMoney?.amount,
+    ),
+    currencyCode,
+    lineItems: mapShopifyCalculatedOrderLineItems(calculatedOrder?.lineItems?.nodes),
+    stagedChangeTypes: unique(
+      toArray<{ __typename?: string | null }>(calculatedOrder?.stagedChanges?.nodes)
+        .map(change => trimOrNull(change?.__typename))
+        .filter((change): change is string => Boolean(change)),
+    ),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Creates a Shopify fulfillment using explicit fulfillment-order input. */
+export const createShopifyFulfillment = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyFulfillmentCreateInput,
+): Promise<ShopifyFulfillmentCreateResult> => {
+  const client = await createShopifyClient(store)
+  const shop = await fetchShopifyShopMetadata(client)
+  const trackingInfo = input.trackingInfo
+    ? {
+        company: trimOrNull(input.trackingInfo.company) ?? undefined,
+        number: trimOrNull(input.trackingInfo.number) ?? undefined,
+        url: trimOrNull(input.trackingInfo.url) ?? undefined,
+      }
+    : undefined
+  const originAddress = input.originAddress
+    ? {
+        address1: trimOrNull(input.originAddress.address1) ?? undefined,
+        address2: trimOrNull(input.originAddress.address2) ?? undefined,
+        city: trimOrNull(input.originAddress.city) ?? undefined,
+        provinceCode: trimOrNull(input.originAddress.provinceCode) ?? undefined,
+        countryCode: trimOrNull(input.originAddress.countryCode) ?? undefined,
+        zip: trimOrNull(input.originAddress.zip) ?? undefined,
+      }
+    : undefined
+
+  const result = await client.request<ShopifyFulfillmentCreateMutation>(
+    SHOPIFY_FULFILLMENT_CREATE_MUTATION,
+    {
+      variables: {
+        fulfillment: {
+          notifyCustomer: Boolean(input.notifyCustomer),
+          lineItemsByFulfillmentOrder: input.lineItemsByFulfillmentOrder.map(fulfillmentOrder => ({
+            fulfillmentOrderId: fulfillmentOrder.fulfillmentOrderId,
+            fulfillmentOrderLineItems:
+              fulfillmentOrder.fulfillmentOrderLineItems &&
+              fulfillmentOrder.fulfillmentOrderLineItems.length > 0
+                ? fulfillmentOrder.fulfillmentOrderLineItems.map(lineItem => ({
+                    id: lineItem.id,
+                    quantity: Math.max(1, Math.round(lineItem.quantity)),
+                  }))
+                : undefined,
+          })),
+          trackingInfo:
+            trackingInfo &&
+            Object.values(trackingInfo).some(value => typeof value === "string" && value.length > 0)
+              ? trackingInfo
+              : undefined,
+          originAddress:
+            originAddress &&
+            Object.values(originAddress).some(
+              value => typeof value === "string" && value.length > 0,
+            )
+              ? originAddress
+              : undefined,
+        },
+        message: trimOrNull(input.message),
+      },
+    },
+  )
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.fulfillmentCreate
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    fulfillmentId: trimOrNull(payload?.fulfillment?.id),
+    status: trimOrNull(payload?.fulfillment?.status),
+    trackingInfo: toArray<{
+      company?: string | null
+      number?: string | null
+      url?: string | null
+    }>(payload?.fulfillment?.trackingInfo)
+      .map(info => ({
+        company: trimOrNull(info?.company),
+        number: trimOrNull(info?.number),
+        url: trimOrNull(info?.url),
+      }))
+      .filter(info => info.company || info.number || info.url),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Creates a Shopify return using explicit return input. */
+export const createShopifyReturn = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyReturnCreateInput,
+): Promise<ShopifyReturnCreateResult> => {
+  const client = await createShopifyClient(store)
+  const shop = await fetchShopifyShopMetadata(client)
+  const result = await client.request<ShopifyReturnCreateMutation>(SHOPIFY_RETURN_CREATE_MUTATION, {
+    variables: {
+      returnInput: {
+        orderId: input.orderId,
+        notifyCustomer: input.notifyCustomer ?? undefined,
+        requestedAt: trimOrNull(input.requestedAt) ?? undefined,
+        returnLineItems: input.returnLineItems.map(lineItem => ({
+          fulfillmentLineItemId: lineItem.fulfillmentLineItemId,
+          quantity: Math.max(1, Math.round(lineItem.quantity)),
+          returnReason: trimOrNull(lineItem.returnReason) ?? undefined,
+          returnReasonNote: trimOrNull(lineItem.returnReasonNote) ?? undefined,
+          returnReasonDefinitionId: trimOrNull(lineItem.returnReasonDefinitionId) ?? undefined,
+        })),
+      },
+    },
+  })
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.returnCreate
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: trimOrNull(payload?.return?.order?.id) ?? input.orderId,
+    returnId: trimOrNull(payload?.return?.id),
+    status: trimOrNull(payload?.return?.status),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Creates a Shopify refund using explicit refund input. */
+export const createShopifyRefund = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyRefundCreateInput,
+): Promise<ShopifyRefundCreateResult> => {
+  const client = await createShopifyClient(store)
+  const shop = await fetchShopifyShopMetadata(client)
+  const normalizedIdempotencyKey = trimOrNull(input.idempotencyKey)
+  const variables = {
+    input: {
+      orderId: input.orderId,
+      notify: Boolean(input.notify),
+      note: trimOrNull(input.note) ?? undefined,
+      currency: trimOrNull(input.currency) ?? undefined,
+      allowOverRefunding: input.allowOverRefunding ?? undefined,
+      discrepancyReason: trimOrNull(input.discrepancyReason) ?? undefined,
+      shipping: input.shipping
+        ? {
+            amount: toShopifyMoneyString(input.shipping.amount),
+          }
+        : undefined,
+      refundLineItems: input.refundLineItems?.map(lineItem => ({
+        lineItemId: lineItem.lineItemId,
+        quantity: Math.max(1, Math.round(lineItem.quantity)),
+        restockType: trimOrNull(lineItem.restockType) ?? undefined,
+        locationId: trimOrNull(lineItem.locationId) ?? undefined,
+      })),
+      transactions: input.transactions?.map(transaction => ({
+        amount: toShopifyMoneyString(transaction.amount),
+        gateway: transaction.gateway,
+        kind: transaction.kind ?? "REFUND",
+        orderId: trimOrNull(transaction.orderId) ?? input.orderId,
+        parentId: trimOrNull(transaction.parentId) ?? undefined,
+      })),
+    },
+    idempotencyKey: normalizedIdempotencyKey ?? undefined,
+  }
+  const result = await client.request<ShopifyRefundCreateMutation>(
+    normalizedIdempotencyKey
+      ? SHOPIFY_REFUND_CREATE_IDEMPOTENT_MUTATION
+      : SHOPIFY_REFUND_CREATE_MUTATION,
+    {
+      variables,
+    },
+  )
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.refundCreate
+  const currencyCode =
+    trimOrNull(payload?.refund?.totalRefundedSet?.shopMoney?.currencyCode) ??
+    trimOrNull(input.currency) ??
+    trimOrNull(shop?.currencyCode) ??
+    DEFAULT_PLUGIN_CONFIG.currency
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: trimOrNull(payload?.order?.id) ?? input.orderId,
+    refundId: trimOrNull(payload?.refund?.id),
+    note: trimOrNull(payload?.refund?.note),
+    createdAt: trimOrNull(payload?.refund?.createdAt),
+    totalRefunded: toShopifyMoneyAmount(payload?.refund?.totalRefundedSet?.shopMoney?.amount),
+    currencyCode,
+    transactions: mapShopifyOrderTransactions(
+      toArray<
+        NonNullable<
+          NonNullable<
+            NonNullable<
+              NonNullable<ShopifyRefundCreateMutation["refundCreate"]>["refund"]
+            >["transactions"]
+          >["nodes"]
+        >[number]
+      >(payload?.refund?.transactions?.nodes),
+      currencyCode,
+    ),
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
 /** Resolves a product and recent sales using an existing Shopify client. */
 export const loadShopifySalesSnapshotFromClient = async (
   client: ShopifyGraphQLClient,
@@ -1534,847 +4407,4 @@ export const loadShopifyProductActionSnapshot = async (
     averageUnitCost: productSnapshot.value.averageUnitCost,
     currentMarginPct: productSnapshot.value.currentMarginPct,
   })
-}
-
-const classifyDemandStatus = (input: {
-  dailySalesUnits: number
-  lookbackDays: number
-  unitsSold: number
-  stockoutLikelyAffectedDemand: boolean
-  policy: ProductDecisionPolicy
-}) => {
-  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
-  const hasInsufficientDemandData =
-    input.lookbackDays < policy.insufficientDataMinLookbackDays ||
-    input.stockoutLikelyAffectedDemand ||
-    (input.unitsSold > 0 && input.unitsSold < policy.insufficientDataMinUnitsSold)
-
-  if (hasInsufficientDemandData) {
-    return "insufficient_data"
-  }
-  if (input.dailySalesUnits >= policy.healthyDemandDailySalesThreshold) {
-    return "healthy"
-  }
-  if (input.dailySalesUnits < policy.weakDemandDailySalesThreshold) {
-    return "weak"
-  }
-  return "moderate"
-}
-
-const roundDecisionUnits = (value: number) => Math.max(Math.ceil(value), 0)
-
-const buildProductActionDecisionBase = (input: {
-  snapshot: ShopifyProductActionSnapshot
-  policy?: ProductDecisionPolicy
-}): ProductActionDecisionBase => {
-  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
-  const stockoutDetected = input.snapshot.onHandUnits <= 0
-  const stockoutLikelyAffectedDemand =
-    stockoutDetected &&
-    input.snapshot.unitsSold > 0 &&
-    input.snapshot.dailySalesUnits < policy.healthyDemandDailySalesThreshold
-  const demandStatus: ProductDecisionDemandStatus = classifyDemandStatus({
-    dailySalesUnits: input.snapshot.dailySalesUnits,
-    lookbackDays: input.snapshot.lookbackDays,
-    unitsSold: input.snapshot.unitsSold,
-    stockoutLikelyAffectedDemand,
-    policy,
-  })
-
-  return {
-    storeName: input.snapshot.storeName,
-    timezone: input.snapshot.timezone,
-    currencyCode: input.snapshot.currencyCode,
-    productName: input.snapshot.productName,
-    sku: input.snapshot.sku,
-    lookbackDays: input.snapshot.lookbackDays,
-    dailySalesUnits: input.snapshot.dailySalesUnits,
-    demandStatus,
-    unitsSold: input.snapshot.unitsSold,
-    onHandUnits: input.snapshot.onHandUnits,
-    inventoryDaysLeft: input.snapshot.inventoryDaysLeft,
-    stockoutDetected,
-    hasInsufficientDemandData: demandStatus === "insufficient_data",
-  }
-}
-
-const buildProductActionPricingEvaluation = (input: {
-  snapshot: ShopifyProductActionSnapshot
-  marginFloorPct?: number
-  policy?: ProductDecisionPolicy
-}): ProductActionPricingDecisionSupport => {
-  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
-  const marginFloorPct = optionalNumber(input.marginFloorPct)
-  const currentMarginPct = input.snapshot.currentMarginPct
-  const hasMarginData = currentMarginPct !== null
-  const hasValidMarginFloor = marginFloorPct === null || marginFloorPct < 100
-  const marginAtOrBelowFloor =
-    currentMarginPct !== null && marginFloorPct !== null && hasValidMarginFloor
-      ? currentMarginPct <= marginFloorPct
-      : false
-  const veryLowUnitsSoldThreshold = Math.max(
-    1,
-    input.snapshot.lookbackDays * policy.veryLowLookbackUnitsFactor,
-  )
-  const minimumAllowedUnitPrice =
-    input.snapshot.averageUnitCost !== null
-      ? marginFloorPct !== null && hasValidMarginFloor
-        ? minimumPriceForGrossMargin(input.snapshot.averageUnitCost, marginFloorPct)
-        : marginFloorPct === null
-          ? input.snapshot.averageUnitCost
-          : null
-      : null
-  const maximumDiscountPctFromAveragePrice =
-    minimumAllowedUnitPrice !== null && input.snapshot.averageUnitPrice > 0
-      ? Math.max(
-          ((input.snapshot.averageUnitPrice - minimumAllowedUnitPrice) /
-            input.snapshot.averageUnitPrice) *
-            100,
-          0,
-        )
-      : null
-
-  return {
-    averageUnitPrice: input.snapshot.averageUnitPrice,
-    averageUnitCost: input.snapshot.averageUnitCost,
-    currentMarginPct,
-    marginFloorPct,
-    hasValidMarginFloor,
-    minimumAllowedUnitPrice,
-    maximumDiscountPctFromAveragePrice,
-    hasMarginData,
-    marginAtOrBelowFloor,
-    veryLowUnitsSoldThreshold,
-  }
-}
-
-type ProductDecisionCurrencyContext = Pick<
-  ShopifyProductActionSnapshot,
-  "currencyCode" | "locale"
-> & {
-  fallbackCurrency: string
-}
-
-type PricingDataGap = "missing_cost" | "missing_selling_price" | "missing_cost_and_selling_price"
-
-const formatSnapshotCurrency = (snapshot: ProductDecisionCurrencyContext, value: number) =>
-  currency(value, snapshot.currencyCode ?? snapshot.fallbackCurrency, snapshot.locale)
-
-const formatRelativeDiscount = (value: number | null) =>
-  value !== null && value > 0 ? `, about ${percentage(value)} below the current average price` : ""
-
-const resolvePricingDataGap = (
-  pricing: ProductActionPricingDecisionSupport,
-): PricingDataGap | null => {
-  if (pricing.hasMarginData) {
-    return null
-  }
-  const missingCost = pricing.averageUnitCost === null
-  const missingSellingPrice = pricing.averageUnitPrice <= 0
-
-  if (missingCost && missingSellingPrice) {
-    return "missing_cost_and_selling_price"
-  }
-  if (missingCost) {
-    return "missing_cost"
-  }
-  if (missingSellingPrice) {
-    return "missing_selling_price"
-  }
-  return null
-}
-
-const formatInventoryCoverDays = (value: number) =>
-  Number.isFinite(value) ? `${value.toFixed(1)} days` : "n/a (no recent sales detected)"
-
-const buildMissingPriceFloorAction = (input: {
-  pricing: ProductActionPricingDecisionSupport
-  invalidMarginFloorText: string
-  missingCostAndSellingPriceText: string
-  missingCostText: string
-  missingSellingPriceText: string
-  fallbackText: string
-}) => {
-  const pricingDataGap = resolvePricingDataGap(input.pricing)
-  if (!input.pricing.hasValidMarginFloor) {
-    return input.invalidMarginFloorText
-  }
-  if (pricingDataGap === "missing_cost") {
-    return input.missingCostText
-  }
-  if (pricingDataGap === "missing_cost_and_selling_price") {
-    return input.missingCostAndSellingPriceText
-  }
-  if (pricingDataGap === "missing_selling_price") {
-    return input.missingSellingPriceText
-  }
-  return input.fallbackText
-}
-
-const buildDemandAnalysisPoint = (
-  snapshot: ShopifyProductActionSnapshot,
-  demandStatus: ProductDecisionDemandStatus,
-  hasInsufficientDemandData: boolean,
-) => {
-  const unitsSoldSummary = `${Math.round(snapshot.unitsSold)} units over the last ${snapshot.lookbackDays} days (${snapshot.dailySalesUnits.toFixed(2)}/day)`
-  if (hasInsufficientDemandData) {
-    return `Recent sales are ${unitsSoldSummary}, but the sample window is not reliable enough to classify demand confidently.`
-  }
-  if (snapshot.unitsSold === 0) {
-    return `No units sold over the last ${snapshot.lookbackDays} days, which indicates extremely weak demand.`
-  }
-  if (demandStatus === "weak") {
-    return `Recent sales are ${unitsSoldSummary}, which indicates weak demand.`
-  }
-  if (demandStatus === "healthy") {
-    return `Recent sales are ${unitsSoldSummary}, which indicates healthy demand.`
-  }
-  return `Recent sales are ${unitsSoldSummary}, which indicates moderate demand.`
-}
-
-const buildPricingAnalysisPoint = (
-  snapshot: ProductDecisionCurrencyContext,
-  pricing: ProductActionPricingDecisionSupport,
-) => {
-  const pricingDataGap = resolvePricingDataGap(pricing)
-  if (!pricing.hasValidMarginFloor) {
-    return `Pricing guardrails are unavailable because the configured ${percentage(pricing.marginFloorPct ?? 0)} gross-margin floor cannot be satisfied with a finite selling price.`
-  }
-  if (pricingDataGap !== null) {
-    if (pricingDataGap === "missing_cost_and_selling_price") {
-      return "Pricing guardrails are unavailable because both product cost data and recent selling price data are missing."
-    }
-    if (pricingDataGap === "missing_cost") {
-      return "Pricing guardrails are unavailable because product cost data is missing."
-    }
-    if (pricing.minimumAllowedUnitPrice !== null) {
-      return `Current margin is unavailable because recent selling price data is missing, but the cost-aware floor remains ${formatSnapshotCurrency(snapshot, pricing.minimumAllowedUnitPrice)}.`
-    }
-    return "Current margin is unavailable because recent selling price data is missing."
-  }
-  if (pricing.marginAtOrBelowFloor && pricing.marginFloorPct !== null) {
-    return `Current margin is ${percentage(pricing.currentMarginPct ?? 0)}, already at or below the configured ${percentage(pricing.marginFloorPct)} floor.`
-  }
-  if (
-    pricing.minimumAllowedUnitPrice !== null &&
-    pricing.averageUnitPrice > 0 &&
-    pricing.minimumAllowedUnitPrice >= pricing.averageUnitPrice
-  ) {
-    return `Current margin is ${percentage(pricing.currentMarginPct ?? 0)}, already at or below the cost-aware floor of ${formatSnapshotCurrency(snapshot, pricing.minimumAllowedUnitPrice)}. Any safe pricing move would require raising price rather than discounting.`
-  }
-  if (pricing.minimumAllowedUnitPrice !== null) {
-    return `Current margin is ${percentage(pricing.currentMarginPct ?? 0)}, leaving room to move price while staying above ${formatSnapshotCurrency(snapshot, pricing.minimumAllowedUnitPrice)}.`
-  }
-  return `Current margin is ${percentage(pricing.currentMarginPct ?? 0)}.`
-}
-
-const buildClearanceGuidance = (input: {
-  snapshot: ShopifyProductActionSnapshot
-  base: ProductActionDecisionBase
-  pricing: ProductActionPricingDecisionSupport
-  policy: ProductDecisionPolicy
-  fallbackCurrency: string
-  clearanceDecision: ClearanceDecisionEvaluation["clearanceDecision"]
-}): ProductActionGuidance => {
-  const priceFloor =
-    input.pricing.minimumAllowedUnitPrice !== null
-      ? formatSnapshotCurrency(
-          {
-            currencyCode: input.snapshot.currencyCode,
-            locale: input.snapshot.locale,
-            fallbackCurrency: input.fallbackCurrency,
-          },
-          input.pricing.minimumAllowedUnitPrice,
-        )
-      : null
-  const noInventoryToClear = input.snapshot.onHandUnits <= 0
-  const inventoryPoint = noInventoryToClear
-    ? "On-hand inventory is 0 units, so there is nothing left to clear."
-    : !Number.isFinite(input.snapshot.inventoryDaysLeft)
-      ? `Inventory cover is n/a (no recent sales detected), which is treated as beyond the ${input.policy.clearanceMinInventoryDays}-day clearance review threshold and the ${input.policy.clearanceStrongSignalInventoryDays}-day strong-signal threshold.`
-      : input.snapshot.inventoryDaysLeft >= input.policy.clearanceStrongSignalInventoryDays
-        ? `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, well above the ${input.policy.clearanceMinInventoryDays}-day clearance review threshold and the ${input.policy.clearanceStrongSignalInventoryDays}-day strong-signal threshold.`
-        : input.snapshot.inventoryDaysLeft >= input.policy.clearanceMinInventoryDays
-          ? `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, above the ${input.policy.clearanceMinInventoryDays}-day clearance review threshold.`
-          : `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, still below the ${input.policy.clearanceMinInventoryDays}-day clearance review threshold.`
-
-  let decisionSummary: string
-  let decisionConfidence: ProductDecisionConfidence
-  let decisionAnalysis: string
-  let reviewWindowDays: number
-  let escalationTrigger: string | null
-  let recommendedActions: ProductDecisionAction[]
-
-  if (noInventoryToClear) {
-    decisionSummary = "No clearance action is needed because the SKU has no on-hand inventory."
-    decisionConfidence = "high"
-    decisionAnalysis =
-      "There is no remaining stock to liquidate, so clearance pricing and merchandising are unnecessary."
-    reviewWindowDays = 0
-    escalationTrigger = "Revisit clearance only if inventory becomes available again."
-    recommendedActions = [
-      "Remove the SKU from clearance or aged-inventory queues until stock becomes available again.",
-      "Do not schedule clearance placements or markdown messaging while on-hand inventory is zero.",
-      buildMissingPriceFloorAction({
-        pricing: input.pricing,
-        invalidMarginFloorText:
-          "If inventory returns and clearance is needed later, fix the configured gross-margin floor before setting a clearance price.",
-        missingCostAndSellingPriceText:
-          "If inventory returns and clearance is needed later, confirm both product cost and recent selling-price data before setting a clearance floor.",
-        missingCostText:
-          "If inventory returns and clearance is needed later, confirm cost data before setting a clearance floor.",
-        missingSellingPriceText:
-          "If inventory returns and clearance is needed later, confirm recent selling-price data before setting a clearance floor.",
-        fallbackText:
-          "No clearance price floor is needed unless inventory becomes available again.",
-      }),
-      "No clearance follow-up is needed unless inventory becomes available again.",
-    ]
-  } else if (input.clearanceDecision === "clear_inventory") {
-    decisionSummary = "Move this SKU into clearance now."
-    decisionConfidence = input.base.hasInsufficientDemandData ? "medium" : "high"
-    decisionAnalysis =
-      "The combination of aging inventory and minimal recent sell-through supports an immediate clearance move."
-    reviewWindowDays = 7
-    escalationTrigger =
-      "If sell-through is still weak after the first clearance window, deepen the markdown or bundle offer."
-    recommendedActions = [
-      "Move the SKU into the active clearance queue and avoid fresh buys while inventory is worked down.",
-      "Launch a strong clearance action now, using the clearest liquidation levers available such as a dedicated clearance placement, bundle, or deeper markdown.",
-      priceFloor !== null
-        ? `Use ${priceFloor} as the clearance floor${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
-        : buildMissingPriceFloorAction({
-            pricing: input.pricing,
-            invalidMarginFloorText:
-              "Fix the configured gross-margin floor or set a manual clearance floor before launch.",
-            missingCostAndSellingPriceText:
-              "Set a manual clearance floor only after both product cost and recent selling-price data are available.",
-            missingCostText:
-              "Set a manual price floor before launch because cost-based guardrails are unavailable.",
-            missingSellingPriceText:
-              "Set a manual price floor before launch because recent selling-price data is unavailable.",
-            fallbackText:
-              "Set a manual price floor before launch because pricing guardrails are unavailable.",
-          }),
-      `Review sell-through in ${reviewWindowDays} days and escalate if inventory is still barely moving.`,
-    ]
-  } else if (input.clearanceDecision === "review_for_clearance") {
-    decisionSummary =
-      "Start a controlled clearance test, but do not treat this as a full liquidation yet."
-    decisionConfidence = input.base.hasInsufficientDemandData ? "low" : "medium"
-    decisionAnalysis = input.base.hasInsufficientDemandData
-      ? "The stock signal is strong, but the recent sales sample is still too thin for a high-confidence liquidation call."
-      : "The SKU has aged enough to justify a controlled clearance test before a deeper markdown."
-    reviewWindowDays = input.base.hasInsufficientDemandData ? 14 : 7
-    escalationTrigger =
-      "Escalate to an active clearance move if sell-through stays minimal after the test window."
-    recommendedActions = [
-      "Pause fresh buys or replenishment and place the SKU on the aged-inventory watchlist.",
-      "Start with a controlled clearance test, such as a light markdown, bundle, or dedicated clearance placement, instead of a one-time deep liquidation.",
-      priceFloor !== null
-        ? `Keep any clearance price at or above ${priceFloor}${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
-        : buildMissingPriceFloorAction({
-            pricing: input.pricing,
-            invalidMarginFloorText:
-              "Fix the configured gross-margin floor before setting a clearance floor.",
-            missingCostAndSellingPriceText:
-              "Confirm both product cost and recent selling-price data before setting a clearance floor.",
-            missingCostText: "Confirm cost data before setting a clearance floor.",
-            missingSellingPriceText:
-              "Confirm recent selling-price data before setting a clearance floor.",
-            fallbackText: "Confirm pricing guardrails before setting a clearance floor.",
-          }),
-      `Review sell-through in ${reviewWindowDays} days and escalate if the SKU still barely moves.`,
-    ]
-  } else {
-    decisionSummary = "Do not move this SKU into clearance right now."
-    decisionConfidence =
-      input.base.hasInsufficientDemandData ||
-      input.snapshot.inventoryDaysLeft >= input.policy.clearanceMinInventoryDays
-        ? "medium"
-        : "high"
-    decisionAnalysis =
-      "Current evidence does not justify a clearance move yet, so standard pricing and merchandising should stay in place."
-    reviewWindowDays = input.base.hasInsufficientDemandData ? 14 : 30
-    escalationTrigger = "Reassess sooner if sell-through weakens or inventory cover rises further."
-    recommendedActions = [
-      "Keep the SKU out of the clearance queue for now and continue normal stock management.",
-      "Keep standard pricing and merchandising in place instead of opening a clearance offer.",
-      priceFloor !== null
-        ? `If you later test markdowns, keep price at or above ${priceFloor}.`
-        : buildMissingPriceFloorAction({
-            pricing: input.pricing,
-            invalidMarginFloorText:
-              "Fix the configured gross-margin floor before setting any markdown floor.",
-            missingCostAndSellingPriceText:
-              "Confirm both product cost and recent selling-price data before setting any markdown floor.",
-            missingCostText: "Confirm cost data before setting any markdown floor.",
-            missingSellingPriceText:
-              "Confirm recent selling-price data before setting any markdown floor.",
-            fallbackText: "Confirm pricing guardrails before setting any markdown floor.",
-          }),
-      `Reassess within ${reviewWindowDays} days, or sooner if sell-through weakens further.`,
-    ]
-  }
-
-  return {
-    decisionSummary,
-    decisionConfidence,
-    analysisPoints: [
-      inventoryPoint,
-      buildDemandAnalysisPoint(
-        input.snapshot,
-        input.base.demandStatus,
-        input.base.hasInsufficientDemandData,
-      ),
-      ...(noInventoryToClear
-        ? []
-        : [
-            buildPricingAnalysisPoint(
-              {
-                currencyCode: input.snapshot.currencyCode,
-                locale: input.snapshot.locale,
-                fallbackCurrency: input.fallbackCurrency,
-              },
-              input.pricing,
-            ),
-          ]),
-      decisionAnalysis,
-    ],
-    recommendedActions,
-    reviewWindowDays,
-    escalationTrigger,
-  }
-}
-
-const buildDiscountGuidance = (input: {
-  snapshot: ShopifyProductActionSnapshot
-  base: ProductActionDecisionBase
-  pricing: ProductActionPricingDecisionSupport
-  policy: ProductDecisionPolicy
-  fallbackCurrency: string
-  discountDecision: DiscountDecisionEvaluation["discountDecision"]
-}): ProductActionGuidance => {
-  const pricingDataGap = resolvePricingDataGap(input.pricing)
-  const priceFloor =
-    input.pricing.minimumAllowedUnitPrice !== null
-      ? formatSnapshotCurrency(
-          {
-            currencyCode: input.snapshot.currencyCode,
-            locale: input.snapshot.locale,
-            fallbackCurrency: input.fallbackCurrency,
-          },
-          input.pricing.minimumAllowedUnitPrice,
-        )
-      : null
-  const noInventoryToDiscount = input.snapshot.onHandUnits <= 0
-  const agedIntoClearanceReview =
-    input.discountDecision === "hold_price" &&
-    !noInventoryToDiscount &&
-    !input.base.hasInsufficientDemandData &&
-    input.base.demandStatus !== "healthy" &&
-    input.snapshot.inventoryDaysLeft >= input.policy.clearanceStrongSignalInventoryDays
-  const inventoryPoint = noInventoryToDiscount
-    ? "On-hand inventory is 0 units, so there is nothing available to discount."
-    : !Number.isFinite(input.snapshot.inventoryDaysLeft)
-      ? `Inventory cover is n/a (no recent sales detected), which is treated as already beyond the ${input.policy.discountMinInventoryDays}-day discount threshold and in aged-inventory territory.`
-      : input.snapshot.inventoryDaysLeft >= input.policy.clearanceStrongSignalInventoryDays
-        ? `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, far above the ${input.policy.discountMinInventoryDays}-day discount threshold and already in aged-inventory territory.`
-        : input.snapshot.inventoryDaysLeft >= input.policy.discountMinInventoryDays
-          ? `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, above the ${input.policy.discountMinInventoryDays}-day discount threshold.`
-          : `Inventory cover is ${formatInventoryCoverDays(input.snapshot.inventoryDaysLeft)}, below the ${input.policy.discountMinInventoryDays}-day discount threshold.`
-
-  let decisionSummary: string
-  let decisionConfidence: ProductDecisionConfidence
-  let decisionAnalysis: string
-  let reviewWindowDays: number
-  let escalationTrigger: string | null
-  let recommendedActions: ProductDecisionAction[]
-
-  if (noInventoryToDiscount) {
-    decisionSummary = "No discount action is needed because the SKU has no on-hand inventory."
-    decisionConfidence = "high"
-    decisionAnalysis =
-      "There is no available stock to markdown, so discount pricing and promotional actions are unnecessary."
-    reviewWindowDays = 0
-    escalationTrigger = "Revisit discounting only if inventory becomes available again."
-    recommendedActions = [
-      "Keep the SKU out of markdown or discount queues until inventory becomes available again.",
-      "Do not launch discount messaging or markdown placements while the SKU is unavailable.",
-      buildMissingPriceFloorAction({
-        pricing: input.pricing,
-        invalidMarginFloorText:
-          "If inventory returns and discounting is needed later, fix the configured gross-margin floor before setting a discount floor.",
-        missingCostAndSellingPriceText:
-          "If inventory returns and discounting is needed later, confirm both product cost and recent selling-price data before setting a discount floor.",
-        missingCostText:
-          "If inventory returns and discounting is needed later, confirm cost data before setting a discount floor.",
-        missingSellingPriceText:
-          "If inventory returns and discounting is needed later, confirm recent selling-price data before setting a discount floor.",
-        fallbackText: "No discount floor is needed unless inventory becomes available again.",
-      }),
-      "No discount follow-up is needed unless inventory becomes available again.",
-    ]
-  } else if (input.discountDecision === "test_discount") {
-    decisionSummary = "Run a controlled discount test."
-    decisionConfidence = input.base.hasInsufficientDemandData ? "low" : "medium"
-    decisionAnalysis =
-      "Inventory is heavy enough and demand is weak enough to justify a measured price test, but the markdown should stay controlled."
-    reviewWindowDays = 7
-    escalationTrigger =
-      "If sell-through does not improve after the test window, move the SKU into clearance review."
-    recommendedActions = [
-      "Keep replenishment conservative while the discount test is running so inventory does not build further.",
-      "Run a limited markdown test on this SKU rather than opening a deep or broad promotion immediately.",
-      priceFloor !== null
-        ? `Do not price below ${priceFloor}${formatRelativeDiscount(input.pricing.maximumDiscountPctFromAveragePrice)}.`
-        : "Confirm cost data before setting the discount floor.",
-      `Review sell-through in ${reviewWindowDays} days and escalate only if the markdown does not improve movement.`,
-    ]
-  } else if (input.discountDecision === "discount_blocked") {
-    decisionSummary = !input.pricing.hasValidMarginFloor
-      ? "Do not discount until the configured gross-margin floor is fixed."
-      : pricingDataGap === "missing_cost_and_selling_price"
-        ? "Do not discount until both product cost and recent selling-price data are available."
-        : pricingDataGap === "missing_cost"
-          ? "Do not discount until cost and margin guardrails are available."
-          : pricingDataGap === "missing_selling_price"
-            ? "Do not discount until recent selling-price data is available."
-            : input.pricing.hasMarginData
-              ? "Do not discount under the current margin constraints."
-              : "Do not discount until cost and margin guardrails are available."
-    decisionConfidence =
-      input.base.hasInsufficientDemandData || !input.pricing.hasMarginData ? "low" : "high"
-    decisionAnalysis = !input.pricing.hasValidMarginFloor
-      ? "The configured margin floor is not usable, so discount pricing guardrails are unavailable."
-      : pricingDataGap === "missing_cost_and_selling_price"
-        ? "Both product cost data and recent selling price data are missing, so discount pricing guardrails cannot be computed."
-        : pricingDataGap === "missing_cost"
-          ? "Current cost data is missing, so any discount would be speculative."
-          : pricingDataGap === "missing_selling_price"
-            ? "Recent selling price data is missing, so the margin impact of any discount cannot be evaluated yet."
-            : input.pricing.marginAtOrBelowFloor
-              ? "Current margin is already at or below the configured floor, so discounting would erode the required guardrail."
-              : "Current economics do not support a safe discount at this time."
-    reviewWindowDays = 14
-    escalationTrigger =
-      pricingDataGap === "missing_cost"
-        ? "Revisit discounting once product cost data is available."
-        : pricingDataGap === "missing_cost_and_selling_price"
-          ? "Revisit discounting once both product cost and recent selling-price data are available."
-          : pricingDataGap === "missing_selling_price"
-            ? "Revisit discounting once recent selling-price data is available."
-            : "Revisit discounting if margin improves or the SKU ages into a clearance case."
-    recommendedActions = [
-      "Hold standard pricing until the margin constraint is resolved.",
-      "Avoid leaning on discount-led sell-through for this SKU until the pricing guardrails are clear.",
-      !input.pricing.hasValidMarginFloor
-        ? "Fix the configured gross-margin floor before attempting a discount test."
-        : pricingDataGap === "missing_cost_and_selling_price"
-          ? "Populate both product cost and recent selling-price data before testing a discount."
-          : pricingDataGap === "missing_cost"
-            ? "Populate product cost data before testing a discount."
-            : pricingDataGap === "missing_selling_price"
-              ? "Populate recent selling-price data before testing a discount."
-              : input.pricing.marginAtOrBelowFloor
-                ? "Raise price or wait for cost improvements before discounting."
-                : "Confirm economics before introducing any markdown.",
-      `Reassess within ${reviewWindowDays} days, or sooner once the margin constraint is resolved.`,
-    ]
-  } else {
-    decisionSummary = agedIntoClearanceReview
-      ? "Do not open a standard discount test; move this SKU into clearance review."
-      : "Keep price unchanged for now."
-    decisionConfidence =
-      input.base.hasInsufficientDemandData ||
-      (input.base.demandStatus !== "healthy" &&
-        input.snapshot.inventoryDaysLeft >= input.policy.discountMinInventoryDays)
-        ? "medium"
-        : "high"
-    decisionAnalysis = agedIntoClearanceReview
-      ? "Inventory has already aged past the normal discount window, so the next pricing review should be handled as a clearance case rather than standard discounting."
-      : "Current demand and inventory conditions do not justify opening a discount test right now."
-    reviewWindowDays = input.base.hasInsufficientDemandData ? 14 : agedIntoClearanceReview ? 7 : 21
-    escalationTrigger = agedIntoClearanceReview
-      ? "Start a clearance review now and escalate to an active clearance move if sell-through stays weak."
-      : "Revisit discounting if inventory cover keeps rising and demand weakens further."
-    recommendedActions = [
-      agedIntoClearanceReview
-        ? "Hold off on fresh discount testing and move the SKU onto the clearance review queue."
-        : "Leave the SKU on standard pricing for now.",
-      agedIntoClearanceReview
-        ? "Plan the next commercial move as a clearance review, using clearance placement or liquidation levers instead of normal merchandising."
-        : "Use standard merchandising rather than a markdown until a clearer discount case emerges.",
-      agedIntoClearanceReview
-        ? priceFloor !== null
-          ? `Use ${priceFloor} as the minimum price if the SKU moves into clearance.`
-          : buildMissingPriceFloorAction({
-              pricing: input.pricing,
-              invalidMarginFloorText:
-                "Fix the configured gross-margin floor before setting a clearance floor.",
-              missingCostAndSellingPriceText:
-                "Confirm both product cost and recent selling-price data before setting a clearance floor.",
-              missingCostText: "Confirm cost data before setting a clearance floor.",
-              missingSellingPriceText:
-                "Confirm recent selling-price data before setting a clearance floor.",
-              fallbackText: "Confirm pricing guardrails before setting a clearance floor.",
-            })
-        : priceFloor !== null
-          ? `If you later test a discount, keep price at or above ${priceFloor}.`
-          : buildMissingPriceFloorAction({
-              pricing: input.pricing,
-              invalidMarginFloorText:
-                "Fix the configured gross-margin floor before setting any future discount floor.",
-              missingCostAndSellingPriceText:
-                "Confirm both product cost and recent selling-price data before setting any future discount floor.",
-              missingCostText: "Confirm cost data before setting any future discount floor.",
-              missingSellingPriceText:
-                "Confirm recent selling-price data before setting any future discount floor.",
-              fallbackText: "Confirm pricing guardrails before setting any future discount floor.",
-            }),
-      agedIntoClearanceReview
-        ? `Complete the clearance review within ${reviewWindowDays} days and escalate if inventory still barely moves.`
-        : `Reassess within ${reviewWindowDays} days, or sooner if inventory cover rises further.`,
-    ]
-  }
-
-  return {
-    decisionSummary,
-    decisionConfidence,
-    analysisPoints: [
-      inventoryPoint,
-      buildDemandAnalysisPoint(
-        input.snapshot,
-        input.base.demandStatus,
-        input.base.hasInsufficientDemandData,
-      ),
-      ...(noInventoryToDiscount
-        ? []
-        : [
-            buildPricingAnalysisPoint(
-              {
-                currencyCode: input.snapshot.currencyCode,
-                locale: input.snapshot.locale,
-                fallbackCurrency: input.fallbackCurrency,
-              },
-              input.pricing,
-            ),
-          ]),
-      decisionAnalysis,
-    ],
-    recommendedActions,
-    reviewWindowDays,
-    escalationTrigger,
-  }
-}
-
-/** Evaluates conservative replenishment actions for one product. */
-export const evaluateReplenishmentDecision = (input: {
-  snapshot: ShopifyProductActionSnapshot
-  supplierLeadDays: number
-  safetyStockDays: number
-  policy?: ProductDecisionPolicy
-}): ReplenishmentDecisionEvaluation => {
-  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
-  const base = buildProductActionDecisionBase({
-    snapshot: input.snapshot,
-    policy,
-  })
-  const targetStockUnits = roundDecisionUnits(
-    input.snapshot.dailySalesUnits * (input.supplierLeadDays + input.safetyStockDays),
-  )
-  const recommendedReorderUnits = roundDecisionUnits(
-    Math.max(targetStockUnits - input.snapshot.onHandUnits, 0),
-  )
-
-  let replenishmentDecision: ReplenishmentDecisionEvaluation["replenishmentDecision"]
-  let replenishmentReason: string
-
-  if (input.snapshot.unitsSold === 0) {
-    replenishmentDecision = "do_not_restock"
-    replenishmentReason = `do_not_restock because no units sold over the last ${input.snapshot.lookbackDays} days.`
-  } else if (
-    Number.isFinite(input.snapshot.inventoryDaysLeft) &&
-    input.snapshot.inventoryDaysLeft >= policy.clearanceStrongSignalInventoryDays &&
-    base.demandStatus === "weak"
-  ) {
-    replenishmentDecision = "do_not_restock"
-    replenishmentReason = `do_not_restock because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days and recent demand is weak.`
-  } else if (input.snapshot.inventoryDaysLeft <= input.supplierLeadDays) {
-    replenishmentDecision = "restock_now"
-    replenishmentReason = `restock_now because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, at or below the ${input.supplierLeadDays}-day supplier lead time.`
-  } else if (input.snapshot.inventoryDaysLeft <= input.supplierLeadDays + input.safetyStockDays) {
-    replenishmentDecision = "restock_soon"
-    replenishmentReason = `restock_soon because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, inside the lead-time-plus-safety-stock buffer.`
-  } else {
-    replenishmentDecision = "hold_inventory"
-    replenishmentReason = base.hasInsufficientDemandData
-      ? `hold_inventory because recent demand is non-zero, inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, and the demand data is not reliable enough for a stronger replenishment move.`
-      : `hold_inventory because inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days and recent demand is still active.`
-  }
-
-  return {
-    ...base,
-    targetStockUnits,
-    recommendedReorderUnits,
-    replenishmentDecision,
-    replenishmentReason,
-  }
-}
-
-/** Evaluates conservative discount actions for one product. */
-export const evaluateDiscountDecision = (input: {
-  snapshot: ShopifyProductActionSnapshot
-  marginFloorPct?: number
-  policy?: ProductDecisionPolicy
-  fallbackCurrency?: string
-}): DiscountDecisionEvaluation => {
-  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
-  const base = buildProductActionDecisionBase({
-    snapshot: input.snapshot,
-    policy,
-  })
-  const pricing = buildProductActionPricingEvaluation({
-    ...input,
-    policy,
-  })
-
-  let discountDecision: DiscountDecisionEvaluation["discountDecision"]
-  let discountReason: string
-
-  if (input.snapshot.onHandUnits <= 0) {
-    discountDecision = "hold_price"
-    discountReason = "There is no on-hand inventory left to discount."
-  } else if (input.snapshot.inventoryDaysLeft < policy.discountMinInventoryDays) {
-    discountDecision = "hold_price"
-    discountReason = `Inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, so a discount test is not justified yet.`
-  } else if (base.demandStatus === "healthy") {
-    discountDecision = "hold_price"
-    discountReason = "Demand is healthy enough that discounting is not needed."
-  } else if (base.demandStatus === "insufficient_data") {
-    discountDecision = "hold_price"
-    discountReason = "Recent demand data is still thin, so discount testing would be premature."
-  } else if (input.snapshot.inventoryDaysLeft >= policy.clearanceStrongSignalInventoryDays) {
-    discountDecision = "hold_price"
-    discountReason =
-      "This SKU is better handled as a clearance review than a standard discount test."
-  } else if (base.demandStatus === "weak") {
-    if (!pricing.hasValidMarginFloor) {
-      discountDecision = "discount_blocked"
-      discountReason = `The configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy with a finite selling price.`
-    } else if (!pricing.hasMarginData) {
-      discountDecision = "discount_blocked"
-      discountReason = "Current margin is unavailable."
-    } else if ((pricing.currentMarginPct ?? 0) <= 0) {
-      discountDecision = "discount_blocked"
-      discountReason = "The current selling price is already at or below unit cost."
-    } else if (pricing.marginAtOrBelowFloor) {
-      discountDecision = "discount_blocked"
-      discountReason = `Current margin is at or below the configured ${pricing.marginFloorPct?.toFixed(1)}% floor.`
-    } else {
-      discountDecision = "test_discount"
-      discountReason =
-        pricing.marginFloorPct !== null
-          ? `Inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, demand is weak, and margin remains above the configured floor.`
-          : `Inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, demand is weak, and margin data supports a controlled discount test.`
-    }
-  } else {
-    discountDecision = "hold_price"
-    discountReason = "Demand is not weak enough to justify discounting."
-  }
-
-  const guidance = buildDiscountGuidance({
-    snapshot: input.snapshot,
-    base,
-    pricing,
-    policy,
-    fallbackCurrency: input.fallbackCurrency ?? DEFAULT_PLUGIN_CONFIG.currency,
-    discountDecision,
-  })
-
-  return {
-    ...base,
-    ...pricing,
-    ...guidance,
-    discountDecision,
-    discountReason,
-  }
-}
-
-/** Evaluates conservative clearance actions for one product. */
-export const evaluateClearanceDecision = (input: {
-  snapshot: ShopifyProductActionSnapshot
-  marginFloorPct?: number
-  policy?: ProductDecisionPolicy
-  fallbackCurrency?: string
-}): ClearanceDecisionEvaluation => {
-  const policy = input.policy ?? DEFAULT_PRODUCT_DECISION_POLICY
-  const base = buildProductActionDecisionBase({
-    snapshot: input.snapshot,
-    policy,
-  })
-  const pricing = buildProductActionPricingEvaluation({
-    ...input,
-    policy,
-  })
-
-  let clearanceDecision: ClearanceDecisionEvaluation["clearanceDecision"]
-  let clearanceReason: string
-
-  if (input.snapshot.onHandUnits <= 0) {
-    clearanceDecision = "not_clearance_candidate"
-    clearanceReason = "There is no on-hand inventory left to clear."
-  } else if (input.snapshot.inventoryDaysLeft < policy.clearanceMinInventoryDays) {
-    clearanceDecision = "not_clearance_candidate"
-    clearanceReason = `Inventory cover is only ${input.snapshot.inventoryDaysLeft.toFixed(1)} days, so clearance is premature.`
-  } else if (base.demandStatus === "healthy") {
-    clearanceDecision = "not_clearance_candidate"
-    clearanceReason = "Demand remains healthy."
-  } else if (
-    input.snapshot.inventoryDaysLeft >= policy.clearanceStrongSignalInventoryDays &&
-    base.demandStatus === "weak" &&
-    input.snapshot.unitsSold <= pricing.veryLowUnitsSoldThreshold
-  ) {
-    clearanceDecision = "clear_inventory"
-    clearanceReason = !pricing.hasValidMarginFloor
-      ? `Inventory cover is very high and recent sales are minimal, but clearance pricing guidance is unavailable because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy.`
-      : !pricing.hasMarginData
-        ? "Inventory cover is very high and recent sales are minimal, but pricing guidance is unavailable because margin data is missing."
-        : pricing.marginAtOrBelowFloor
-          ? `Inventory cover is very high and recent sales are minimal, but clearance pricing should stay above the configured ${pricing.marginFloorPct?.toFixed(1)}% margin floor.`
-          : "Inventory cover is very high and recent sales are minimal."
-  } else if (base.demandStatus === "weak" || base.demandStatus === "insufficient_data") {
-    clearanceDecision = "review_for_clearance"
-    const clearanceBaseReason =
-      base.demandStatus === "insufficient_data"
-        ? "Inventory is aging, but recent demand data is not reliable enough for an immediate clearance decision."
-        : `Inventory cover is ${input.snapshot.inventoryDaysLeft.toFixed(1)} days and demand is weak.`
-    clearanceReason = !pricing.hasValidMarginFloor
-      ? `${clearanceBaseReason} Clearance pricing guidance is unavailable because the configured ${pricing.marginFloorPct?.toFixed(1)}% gross-margin floor is impossible to satisfy.`
-      : !pricing.hasMarginData
-        ? `${clearanceBaseReason} Clearance pricing guidance is unavailable because margin data is missing.`
-        : pricing.marginAtOrBelowFloor
-          ? `${clearanceBaseReason} Clearance pricing should stay above the configured ${pricing.marginFloorPct?.toFixed(1)}% margin floor.`
-          : clearanceBaseReason
-  } else {
-    clearanceDecision = "not_clearance_candidate"
-    clearanceReason = "Demand is not weak enough to justify clearance."
-  }
-
-  const guidance = buildClearanceGuidance({
-    snapshot: input.snapshot,
-    base,
-    pricing,
-    policy,
-    fallbackCurrency: input.fallbackCurrency ?? DEFAULT_PLUGIN_CONFIG.currency,
-    clearanceDecision,
-  })
-
-  return {
-    ...base,
-    ...pricing,
-    ...guidance,
-    clearanceReason,
-    clearanceDecision,
-  }
 }

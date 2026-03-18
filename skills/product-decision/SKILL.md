@@ -5,31 +5,34 @@ description: "Choose replenishment, discount, or clearance guidance for one prod
 
 # Product Decision
 
-Use the decision tool that matches the user's ask.
+Use `seller_catalog` to load one product fact bundle, then make the recommendation in the skill.
 
-Tool selection:
+- Call `seller_catalog` with `resource: "product_facts"`, `operation: "query"`, and `input.productRef` for the product.
+- Use `input.salesLookbackDays` when the user provides it or when the calling context requires a specific review window.
+- If the tool returns an ambiguity prompt, ask the user to clarify the product before giving advice.
 
-- Restock / reorder -> `seller_replenishment_decision`
-- Markdown / discount -> `seller_discount_decision`
-- Clearance / liquidation -> `seller_clearance_decision`
-- Combined asks -> call each relevant tool for the same product, store, and lookback, then merge the results
+Decision guidance:
+
+- Restock / reorder: favor restocking when sales are active and inventory cover is low or stock is already out. Be cautious when demand is weak or sales are near zero.
+- Markdown / discount: consider discount testing only when inventory cover is high enough to justify intervention and margin appears healthy enough to absorb a markdown.
+- Clearance / liquidation: reserve clearance guidance for aged inventory with weak demand, especially when inventory cover is very long and sales are slow.
+- If cost or margin data is unavailable, say that discount and clearance guidance is lower confidence and avoid precise pricing instructions.
+- For combined asks, answer each requested action using the same fact set rather than calling separate tools.
 
 Answer shape:
 
-- Preserve each tool's decision sentence and numeric facts.
 - Present current-state facts separately from analysis.
-- If a discount or clearance tool includes a `Structured decision data` block in its content, prefer that block over the fallback prose and turn it into natural-language guidance. Do not echo the raw block.
 - Write a concise operator-facing answer in the user's language with natural section headings.
-- For single-tool answers, use this order: current situation, analysis, recommended actions, conclusion.
+- For single-product answers, use this order: current situation, analysis, recommended actions, conclusion.
 - Make recommended actions concrete. Include pricing guardrails, review cadence, or escalation triggers when provided.
 
 If blocked:
 
-- If any tool returns an ambiguity prompt for a combined question, ask the user to clarify before continuing.
-- If `seller_replenishment_decision` needs lead-time inputs, keep any ready discount / clearance guidance and ask only for the missing replenishment inputs.
+- If the product reference is ambiguous, ask the user to clarify before continuing.
+- If margin or cost facts are unavailable, continue with inventory and demand guidance and clearly mark pricing guidance as limited.
 
 Boundaries:
 
-- Base the answer only on tool-provided decisions and facts.
+- Base the answer only on tool-provided facts.
 - Do not add ad-spend, traffic, or promotion speculation.
 - Do not turn the answer into a campaign plan.

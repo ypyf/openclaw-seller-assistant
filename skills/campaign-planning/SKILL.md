@@ -5,7 +5,7 @@ description: "Plan seller-side campaigns with store and product facts. Use when 
 
 # Campaign Planning
 
-Use factual tools such as `seller_inventory_query`, `seller_sales_query`, or `seller_store_overview` when current inventory, demand, or store context is needed before planning.
+Use factual tools such as `seller_inventory`, `seller_orders`, `seller_catalog`, or `seller_analytics` when current inventory, demand, product pricing facts, or store context is needed before planning.
 
 Do not use this skill for questions like:
 

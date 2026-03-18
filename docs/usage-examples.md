@@ -26,6 +26,38 @@ These examples show representative natural-language prompts for each seller capa
 - "Check sales for short sleeve in my default store."
 - "Check sales for SKU WM-01 in store shopify-us. Use a 21 day sales lookback."
 
+## Draft Orders
+
+- "List open draft orders in my default store."
+- "Show recent draft orders for buyer@example.com in store shopify-us."
+- "Create a draft order for 2 units of SKU WM-01 in my default store."
+- "Update draft order gid://shopify/DraftOrder/1 and add note rush approval."
+- "Email the invoice for draft order gid://shopify/DraftOrder/1 in my default store."
+- "Complete draft order gid://shopify/DraftOrder/1 in store shopify-us."
+
+## Fulfillment Orders
+
+- "List open fulfillment orders in my default store."
+- "Show fulfillment orders assigned to Main Warehouse in store shopify-us."
+- "Place fulfillment order gid://shopify/FulfillmentOrder/1 on hold for awaiting payment."
+- "Release the hold on fulfillment order gid://shopify/FulfillmentOrder/1."
+- "Move fulfillment order gid://shopify/FulfillmentOrder/1 to location gid://shopify/Location/2."
+
+## Orders and Order Edits
+
+- "Get order gid://shopify/Order/1001 in my default store."
+- "Update order gid://shopify/Order/1001 and add note gift wrap."
+- "Update order gid://shopify/Order/1001 with tag vip and PO number PO-1001."
+- "Begin an order edit for gid://shopify/Order/1001 in store shopify-us."
+
+## Catalog Browse
+
+- "List products in my default store."
+- "Show active products from vendor Acme in my default store."
+- "List variants matching SKU WM-01 in store shopify-us."
+- "List every SKU in my default store."
+- "Show the next page of variants in my default store."
+
 ## Replenishment Decision
 
 - "Should I restock SKU WM-01 in my default store?"

@@ -7,19 +7,6 @@ type DefaultPluginConfig = {
   salesLookbackDays: number
 }
 
-export type ProductDecisionPolicy = {
-  weakDemandDailySalesThreshold: number
-  healthyDemandDailySalesThreshold: number
-  insufficientDataMinLookbackDays: number
-  insufficientDataMinUnitsSold: number
-  discountMinInventoryDays: number
-  clearanceMinInventoryDays: number
-  clearanceStrongSignalInventoryDays: number
-  veryLowLookbackUnitsFactor: number
-}
-
-type RawProductDecisionPolicy = Partial<ProductDecisionPolicy>
-
 /** Built-in fallback values used when the plugin config omits a supported setting. */
 export const DEFAULT_PLUGIN_CONFIG: DefaultPluginConfig = {
   currency: "USD",
@@ -28,21 +15,7 @@ export const DEFAULT_PLUGIN_CONFIG: DefaultPluginConfig = {
   salesLookbackDays: 30,
 }
 
-/** Built-in defaults for product decision thresholds. */
-export const DEFAULT_PRODUCT_DECISION_POLICY: ProductDecisionPolicy = {
-  weakDemandDailySalesThreshold: 0.3,
-  healthyDemandDailySalesThreshold: 1,
-  insufficientDataMinLookbackDays: 14,
-  insufficientDataMinUnitsSold: 3,
-  discountMinInventoryDays: 60,
-  clearanceMinInventoryDays: 120,
-  clearanceStrongSignalInventoryDays: 180,
-  veryLowLookbackUnitsFactor: 0.1,
-}
-
 export type ShopifyStoreOperationsConfig = {
-  supplierLeadDays?: number
-  safetyStockDays?: number
   salesLookbackDays?: number
 }
 
@@ -59,8 +32,6 @@ export type ShopifyStoreConfig = {
 type RawPluginConfig = {
   currency?: string
   locale?: string
-  targetMarginFloorPct?: number
-  decisionPolicy?: RawProductDecisionPolicy
   defaultStoreId?: string
   stores?: {
     shopify?: ShopifyStoreConfig[]
@@ -73,73 +44,11 @@ export type PluginConfig = {
   currency: string
   /** Display locale used when formatting dates, numbers, and currency output. */
   locale: string
-  decisionPolicy: ProductDecisionPolicy
-  targetMarginFloorPct?: number
   defaultStoreId?: string
   stores?: {
     shopify?: ShopifyStoreConfig[]
   }
 } & Record<string, unknown>
-
-const normalizeNumberAtLeast = (value: unknown, fallback: number, minimum: number) =>
-  typeof value === "number" && Number.isFinite(value) && value >= minimum ? value : fallback
-
-const normalizeProductDecisionPolicy = (
-  value: RawProductDecisionPolicy | undefined,
-): ProductDecisionPolicy => {
-  const weakDemandDailySalesThreshold = normalizeNumberAtLeast(
-    value?.weakDemandDailySalesThreshold,
-    DEFAULT_PRODUCT_DECISION_POLICY.weakDemandDailySalesThreshold,
-    0,
-  )
-  const healthyDemandDailySalesThreshold = Math.max(
-    normalizeNumberAtLeast(
-      value?.healthyDemandDailySalesThreshold,
-      DEFAULT_PRODUCT_DECISION_POLICY.healthyDemandDailySalesThreshold,
-      0,
-    ),
-    weakDemandDailySalesThreshold,
-  )
-  const clearanceMinInventoryDays = normalizeNumberAtLeast(
-    value?.clearanceMinInventoryDays,
-    DEFAULT_PRODUCT_DECISION_POLICY.clearanceMinInventoryDays,
-    0,
-  )
-
-  return {
-    weakDemandDailySalesThreshold,
-    healthyDemandDailySalesThreshold,
-    insufficientDataMinLookbackDays: normalizeNumberAtLeast(
-      value?.insufficientDataMinLookbackDays,
-      DEFAULT_PRODUCT_DECISION_POLICY.insufficientDataMinLookbackDays,
-      0,
-    ),
-    insufficientDataMinUnitsSold: normalizeNumberAtLeast(
-      value?.insufficientDataMinUnitsSold,
-      DEFAULT_PRODUCT_DECISION_POLICY.insufficientDataMinUnitsSold,
-      0,
-    ),
-    discountMinInventoryDays: normalizeNumberAtLeast(
-      value?.discountMinInventoryDays,
-      DEFAULT_PRODUCT_DECISION_POLICY.discountMinInventoryDays,
-      0,
-    ),
-    clearanceMinInventoryDays,
-    clearanceStrongSignalInventoryDays: Math.max(
-      normalizeNumberAtLeast(
-        value?.clearanceStrongSignalInventoryDays,
-        DEFAULT_PRODUCT_DECISION_POLICY.clearanceStrongSignalInventoryDays,
-        0,
-      ),
-      clearanceMinInventoryDays,
-    ),
-    veryLowLookbackUnitsFactor: normalizeNumberAtLeast(
-      value?.veryLowLookbackUnitsFactor,
-      DEFAULT_PRODUCT_DECISION_POLICY.veryLowLookbackUnitsFactor,
-      0,
-    ),
-  }
-}
 
 /** Normalizes raw plugin config into the runtime shape used by the plugin. */
 export const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): PluginConfig => {
@@ -149,11 +58,6 @@ export const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): Pl
     ...rawConfig,
     currency: rawConfig.currency ?? DEFAULT_PLUGIN_CONFIG.currency,
     locale: rawConfig.locale ?? DEFAULT_PLUGIN_CONFIG.locale,
-    decisionPolicy: normalizeProductDecisionPolicy(rawConfig.decisionPolicy),
-    targetMarginFloorPct:
-      typeof rawConfig.targetMarginFloorPct === "number"
-        ? rawConfig.targetMarginFloorPct
-        : undefined,
   }
 }
 
@@ -180,7 +84,7 @@ export const findConfiguredStore = (
 /** Reads a numeric store-level operation setting when present and returns undefined otherwise. */
 export const getStoreOperationNumber = (
   configuredStore: ShopifyStoreConfig | null,
-  key: "supplierLeadDays" | "safetyStockDays" | "salesLookbackDays",
+  key: "salesLookbackDays",
 ) => {
   const storeValue = configuredStore?.operations?.[key]
   if (typeof storeValue === "number" && Number.isFinite(storeValue)) {
