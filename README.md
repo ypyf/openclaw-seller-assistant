@@ -1,16 +1,15 @@
 # Seller Assistant
 
-`seller-assistant` is an OpenClaw plugin for merchant operations workflows across commerce platforms. It currently supports Shopify store connectivity, and is designed to expand to additional platforms such as Amazon over time.
+`seller-assistant` is an OpenClaw plugin for Shopify merchant operations workflows.
 
 > [!WARNING]
 > This project is evolving quickly. Many features are still incomplete, and tool behavior, configuration, and public interfaces may change without preserving backward compatibility between releases.
 
-It packages seven seller tools:
+It packages six seller tools:
 
 - `seller_store_overview`: the single store-level sales tool for either one-window store facts or fixed multi-window store sales summaries
 - `seller_inventory_query`: look up current on-hand inventory for an exact SKU, full product title, or title keywords
 - `seller_sales_query`: query recent sales for an exact SKU, full product title, or title keywords
-- `seller_quote_builder`: draft RFQ / quote responses with margin guardrails
 - `seller_replenishment_decision`: decide whether to restock or reorder a product using Shopify inventory and recent sales
 - `seller_discount_decision`: decide whether a product is a candidate for markdown or discount testing
 - `seller_clearance_decision`: decide whether a product is a candidate for clearance
@@ -57,7 +56,6 @@ For restricted configs, add the plugin id under `plugins.allow` and list the too
       "seller_store_overview",
       "seller_inventory_query",
       "seller_sales_query",
-      "seller_quote_builder",
       "seller_replenishment_decision",
       "seller_discount_decision",
       "seller_clearance_decision"
@@ -78,9 +76,7 @@ Store config lives under:
 
 `plugins.entries.seller-assistant.config`
 
-Use platform names as keys under `stores`.
-
-The example below only shows Shopify because Shopify is the only store platform currently implemented.
+Use `stores.shopify` to configure one or more Shopify stores.
 
 Example:
 
@@ -143,8 +139,6 @@ Built-in defaults when a config value is omitted:
 
 - `currency`: `USD`
 - `locale`: `en-US`
-- `lowInventoryDays`: `14`
-- `responseTone`: `consultative`
 - `stores.shopify[].operations.salesLookbackDays`: `30`
 - `decisionPolicy.weakDemandDailySalesThreshold`: `0.3`
 - `decisionPolicy.healthyDemandDailySalesThreshold`: `1`
@@ -224,7 +218,6 @@ After the plugin is loaded, ask the agent in natural language:
 - "Show a store sales summary for my default store."
 - "Check store health for my default store."
 - "Check inventory for short sleeve in my default store."
-- "Draft a quote for Acme for 500 wireless mice. Unit cost is 8, target price is 12, competitor price is 11.5, and lead time is 10 days."
 - "Should I restock, discount, or clear SKU WM-01 in my default store?"
 - "Should I restock SKU WM-01 in my default store?"
 - "Is this SKU worth replenishing or clearing?"
@@ -244,7 +237,6 @@ More examples are available in [Usage Examples](./docs/usage-examples.md).
 - Product decisions are skill-led: the `product-decision` skill should call `seller_replenishment_decision`, `seller_discount_decision`, and/or `seller_clearance_decision` depending on the user's ask, and aggregate outputs for multi-part questions.
 - `seller_replenishment_decision`, `seller_discount_decision`, and `seller_clearance_decision` support inventory-and-pricing decisions only. They do not answer paid-promotion or ad-investment questions.
 - Discount and clearance pricing guidance require Shopify cost access. If Shopify product cost permission is missing, those tools should ask the user to enable it rather than invent alternate data sources or silently downgrade the pricing result.
-- Campaign planning remains skill-led and should stay focused on promotion strategy, not replenishment / discount / clearance ownership.
 
 ## License
 

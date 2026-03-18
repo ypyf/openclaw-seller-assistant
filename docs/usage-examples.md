@@ -26,10 +26,6 @@ These examples show representative natural-language prompts for each seller capa
 - "Check sales for short sleeve in my default store."
 - "Check sales for SKU WM-01 in store shopify-us. Use a 21 day sales lookback."
 
-## Quote Builder
-
-- "Draft a quote for Acme for 500 wireless mice. Unit cost is 8, target price is 12, competitor price is 11.5, and lead time is 10 days."
-
 ## Replenishment Decision
 
 - "Should I restock SKU WM-01 in my default store?"

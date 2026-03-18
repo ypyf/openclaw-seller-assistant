@@ -73,6 +73,7 @@ export type ShopifyStoreOverviewSnapshot = {
   inventoryUnits?: number
   averageDailyUnits?: number
   inventoryDaysLeft?: number
+  inventoryErrorMessage?: string
 }
 
 export type ShopifyStoreSalesSummaryWindow = {
@@ -131,14 +132,6 @@ export type ShopifyProductSnapshot = ShopifyInventorySnapshot & {
   averageUnitPrice: number
   averageUnitCost: number | null
   currentMarginPct: number | null
-}
-
-export type ShopifyCampaignSnapshot = ShopifyRestockSnapshot & {
-  currencyCode: string | null
-  currentMarginPct: number | null
-  inventoryDaysLeft: number
-  averageUnitPrice: number
-  averageUnitCost: number | null
 }
 
 export type ProductDecisionDemandStatus = "healthy" | "moderate" | "weak" | "insufficient_data"
@@ -216,25 +209,6 @@ export type ClearanceDecisionEvaluation = ProductActionDecisionBase &
     clearanceDecision: "not_clearance_candidate" | "review_for_clearance" | "clear_inventory"
     clearanceReason: string
   }
-
-export type RestockSignal = {
-  sku: string
-  onHandUnits: number
-  dailySalesUnits: number
-  supplierLeadDays: number
-  safetyStockDays: number
-  source: string
-  retrievedAtIso: string
-  locale: string
-  storeName: string
-  timezone: string
-  productName: string
-  lookbackDays?: number
-  reorderPointUnits: number
-  daysLeft: number
-  urgency: "normal" | "high" | "critical"
-  action: string
-}
 
 type ShopifyCandidateMatchKind = "sku_exact" | "title_exact" | "title_fuzzy"
 export type StoreOverviewRangePreset =
@@ -682,6 +656,21 @@ const fetchAllShopifyInventoryUnits = async (client: ShopifyGraphQLClient) => {
   }
 
   return inventoryUnits
+}
+
+const loadOptionalShopifyInventoryUnits = async (client: ShopifyGraphQLClient) => {
+  try {
+    return {
+      inventoryUnits: await fetchAllShopifyInventoryUnits(client),
+      inventoryErrorMessage: undefined,
+    }
+  } catch (error) {
+    return {
+      inventoryUnits: undefined,
+      inventoryErrorMessage:
+        error instanceof Error ? error.message : "Failed to load Shopify inventory totals.",
+    }
+  }
 }
 
 const fetchAllProductVariants = async (
@@ -1185,17 +1174,14 @@ export const loadShopifyStoreOverview = async (
     startDate?: string
     endDate?: string
     callerTimeZone?: string
-    includeInventory?: boolean
   },
 ): Promise<ShopifyStoreOverviewSnapshot> => {
   const client = await createShopifyClient(store)
-  const [shopResult, inventoryUnits] = await Promise.all([
+  const [shopResult, inventoryResult] = await Promise.all([
     client.request<{
       shop?: { name?: string; currencyCode?: string; ianaTimezone?: string | null }
     }>(SHOPIFY_SHOP_QUERY),
-    options.includeInventory === false
-      ? Promise.resolve<number | undefined>(undefined)
-      : fetchAllShopifyInventoryUnits(client),
+    loadOptionalShopifyInventoryUnits(client),
   ])
 
   if (shopResult.errors) {
@@ -1223,8 +1209,8 @@ export const loadShopifyStoreOverview = async (
   const unitsSold = sum(orders.map(order => toNumber(order?.currentSubtotalLineItemsQuantity)))
   const averageDailyUnits = window.dayCount > 1 ? unitsSold / window.dayCount : undefined
   const inventoryDaysLeft =
-    typeof inventoryUnits === "number" && averageDailyUnits && averageDailyUnits > 0
-      ? inventoryUnits / averageDailyUnits
+    typeof inventoryResult.inventoryUnits === "number" && averageDailyUnits && averageDailyUnits > 0
+      ? inventoryResult.inventoryUnits / averageDailyUnits
       : undefined
   const retrievedAtIso = new Date().toISOString()
 
@@ -1242,9 +1228,10 @@ export const loadShopifyStoreOverview = async (
     ordersCount: orders.length,
     unitsSold,
     revenue,
-    inventoryUnits,
+    inventoryUnits: inventoryResult.inventoryUnits,
     averageDailyUnits,
     inventoryDaysLeft,
+    inventoryErrorMessage: inventoryResult.inventoryErrorMessage,
   }
 }
 
@@ -1255,7 +1242,6 @@ export const loadShopifyStoreSalesSummary = async (
     timeBasis: StoreOverviewTimeBasis
     windows: StoreOverviewRangePreset[]
     callerTimeZone?: string
-    includeInventory?: boolean
   },
 ): Promise<ShopifyStoreSalesSummarySnapshot> => {
   const client = await createShopifyClient(store)
@@ -1280,18 +1266,7 @@ export const loadShopifyStoreSalesSummary = async (
   )
   const ordersQuery = `created_at:>=${aggregateStart} created_at:<${aggregateEnd} financial_status:paid`
   const orders = await fetchAllShopifyOrders(client, ordersQuery)
-  let inventoryUnits: number | undefined
-  let inventoryErrorMessage: string | undefined
-
-  if (options.includeInventory !== false) {
-    try {
-      inventoryUnits = await fetchAllShopifyInventoryUnits(client)
-    } catch (error) {
-      inventoryUnits = undefined
-      inventoryErrorMessage =
-        error instanceof Error ? error.message : "Failed to load Shopify inventory totals."
-    }
-  }
+  const { inventoryUnits, inventoryErrorMessage } = await loadOptionalShopifyInventoryUnits(client)
 
   const currencyCode =
     shop?.currencyCode ??
@@ -1500,60 +1475,6 @@ export const loadShopifyProductSnapshotFromClient = async (
     onHandUnits: sum(variants.map(variant => toNumber(variant?.inventoryQuantity))),
     currencyCode: shop?.currencyCode ?? null,
     ...summarizeShopifyVariantPricing(variants),
-  })
-}
-
-/** Resolves a product and recent sales by creating a Shopify client on demand. */
-export const loadShopifyRestockSnapshot = async (
-  store: ShopifyStoreConfig,
-  sku: string,
-  lookbackDays: number,
-  locale: string,
-): Promise<FlowResolution<ShopifyRestockSnapshot>> => {
-  const client = await createShopifyClient(store)
-  return loadShopifyRestockSnapshotFromClient(client, store, sku, lookbackDays, locale)
-}
-
-/** Loads campaign planning inputs from Shopify, including sales, inventory cover, and pricing. */
-export const loadShopifyCampaignSnapshot = async (
-  store: ShopifyStoreConfig,
-  sku: string,
-  lookbackDays: number,
-  locale: string,
-): Promise<FlowResolution<ShopifyCampaignSnapshot>> => {
-  const client = await createShopifyClient(store)
-  const snapshot = await loadShopifyRestockSnapshotFromClient(
-    client,
-    store,
-    sku,
-    lookbackDays,
-    locale,
-  )
-  if (snapshot.kind !== "ready") {
-    return snapshot
-  }
-  const productSnapshot = await loadShopifyProductSnapshotFromClient(
-    client,
-    store,
-    snapshot.value.sku,
-    locale,
-  )
-  if (productSnapshot.kind !== "ready") {
-    return productSnapshot
-  }
-  const inventoryDaysLeft =
-    snapshot.value.dailySalesUnits > 0
-      ? snapshot.value.onHandUnits / snapshot.value.dailySalesUnits
-      : 999
-
-  return ready({
-    ...snapshot.value,
-    retrievedAtIso: new Date().toISOString(),
-    currencyCode: productSnapshot.value.currencyCode,
-    currentMarginPct: productSnapshot.value.currentMarginPct,
-    inventoryDaysLeft,
-    averageUnitPrice: productSnapshot.value.averageUnitPrice,
-    averageUnitCost: productSnapshot.value.averageUnitCost,
   })
 }
 
@@ -2455,52 +2376,5 @@ export const evaluateClearanceDecision = (input: {
     ...guidance,
     clearanceReason,
     clearanceDecision,
-  }
-}
-
-/** Computes reorder urgency and action guidance from inventory and demand inputs. */
-export const evaluateRestockSignal = (input: {
-  sku: string
-  onHandUnits: number
-  dailySalesUnits: number
-  supplierLeadDays: number
-  safetyStockDays: number
-  source: string
-  retrievedAtIso: string
-  locale: string
-  storeName: string
-  timezone: string
-  productName: string
-  lookbackDays?: number
-}): RestockSignal => {
-  const dailySalesUnits = Math.max(input.dailySalesUnits, 0)
-  const reorderPointUnits = (input.supplierLeadDays + input.safetyStockDays) * dailySalesUnits
-  const daysLeft =
-    dailySalesUnits > 0 ? input.onHandUnits / dailySalesUnits : Number.POSITIVE_INFINITY
-  const urgency =
-    dailySalesUnits <= 0
-      ? "normal"
-      : daysLeft <= input.supplierLeadDays
-        ? "critical"
-        : daysLeft <= input.supplierLeadDays + input.safetyStockDays
-          ? "high"
-          : "normal"
-
-  const action =
-    dailySalesUnits <= 0
-      ? "Action: no recent sales were detected for this SKU, so verify demand before placing a replenishment order."
-      : urgency === "critical"
-        ? "Action: place a replenishment order now and throttle demand on this SKU."
-        : urgency === "high"
-          ? "Action: start replenishment this cycle and avoid discounting until inbound stock is confirmed."
-          : "Action: inventory posture is acceptable; keep monitoring weekly."
-
-  return {
-    ...input,
-    dailySalesUnits,
-    reorderPointUnits,
-    daysLeft,
-    urgency,
-    action,
   }
 }

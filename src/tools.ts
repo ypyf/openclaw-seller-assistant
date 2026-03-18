@@ -32,9 +32,7 @@ import {
 import {
   currency,
   formatDateTime,
-  grossMarginPct,
   isValidTimeZone,
-  minimumPriceForGrossMargin,
   needsInputResult,
   optionalNumber,
   percentage,
@@ -117,30 +115,6 @@ const SellerStoreOverviewParamsSchema = Type.Object(
         description:
           'Optional standard summary windows to include. Use this for multi-window store sales summaries across relative windows such as today, yesterday, and last_7_days. seller_store_overview interprets them using "timeBasis". Pass an empty array to request the default full summary window set.',
       }),
-    ),
-    includeInventory: Type.Optional(
-      Type.Boolean({
-        description:
-          "Whether to include total inventory units and inventory cover in the store overview. Defaults to true.",
-      }),
-    ),
-  },
-  { additionalProperties: false },
-)
-
-const SellerQuoteBuilderParamsSchema = Type.Object(
-  {
-    buyerName: Type.String(),
-    productName: Type.String(),
-    quantity: Type.Number(),
-    unitCost: Type.Number(),
-    suggestedUnitPrice: Type.Number(),
-    competitorUnitPrice: Type.Optional(Type.Number()),
-    shippingLeadDays: Type.Optional(Type.Number()),
-    paymentTerms: Type.Optional(Type.String()),
-    notes: Type.Optional(Type.String()),
-    tone: Type.Optional(
-      Type.Union([Type.Literal("concise"), Type.Literal("consultative"), Type.Literal("premium")]),
     ),
   },
   { additionalProperties: false },
@@ -238,7 +212,6 @@ const SellerClearanceDecisionParamsSchema = Type.Object(
 )
 
 type SellerStoreOverviewParams = Static<typeof SellerStoreOverviewParamsSchema>
-type SellerQuoteBuilderParams = Static<typeof SellerQuoteBuilderParamsSchema>
 type SellerInventoryLookupParams = Static<typeof SellerInventoryLookupParamsSchema>
 type SellerSalesLookupParams = Static<typeof SellerSalesLookupParamsSchema>
 type SellerReplenishmentDecisionParams = Static<typeof SellerReplenishmentDecisionParamsSchema>
@@ -797,7 +770,9 @@ const formatStoreOverview = (input: ShopifyStoreOverviewSnapshot, options: { loc
       : null,
     typeof input.inventoryUnits === "number"
       ? `Inventory units: ${Math.round(input.inventoryUnits)}`
-      : null,
+      : input.inventoryErrorMessage
+        ? `Inventory: unavailable (${input.inventoryErrorMessage})`
+        : null,
     typeof input.inventoryDaysLeft === "number"
       ? `Inventory cover: ${input.inventoryDaysLeft.toFixed(1)} days`
       : null,
@@ -846,63 +821,6 @@ const formatStoreSalesSummary = (input: {
     .join("\n")
 }
 
-const formatQuoteDraft = (input: {
-  buyerName: string
-  productName: string
-  quantity: number
-  suggestedUnitPrice: number
-  floorPrice: number | null
-  marginPct: number
-  pricePositioning: string
-  shippingLeadDays: number
-  paymentTerms?: string
-  notes?: string
-  tone: string
-  targetMarginFloorPct?: number
-  currency: string
-  locale: string
-}) => {
-  const openingByTone: Record<string, string> = {
-    concise: `Quote for ${input.productName}`,
-    consultative: `Thanks for the RFQ. Below is a recommended quote for ${input.productName}.`,
-    premium: `We reviewed your requirement and prepared a supply proposal for ${input.productName}.`,
-  }
-
-  return [
-    openingByTone[input.tone] ?? openingByTone.consultative,
-    "",
-    `Buyer: ${input.buyerName}`,
-    `Quantity: ${input.quantity}`,
-    `Suggested unit price: ${currency(input.suggestedUnitPrice, input.currency, input.locale)}`,
-    typeof input.targetMarginFloorPct === "number"
-      ? input.floorPrice === null
-        ? `Commercial floor: unavailable (configured ${percentage(input.targetMarginFloorPct)} gross margin is not achievable with a finite selling price)`
-        : `Commercial floor: ${currency(input.floorPrice, input.currency, input.locale)}`
-      : null,
-    `Gross margin at suggested price: ${percentage(input.marginPct)}`,
-    `Market position: ${input.pricePositioning}`,
-    `Lead time: ${input.shippingLeadDays} days`,
-    `Payment terms: ${input.paymentTerms ?? "50% deposit, balance before dispatch"}`,
-    "",
-    "Draft response:",
-    `We can offer ${input.quantity} units of ${input.productName} at ${currency(input.suggestedUnitPrice, input.currency, input.locale)} per unit, with an estimated lead time of ${input.shippingLeadDays} days.`,
-    typeof input.targetMarginFloorPct === "number" && input.floorPrice === null
-      ? `Warning: the configured margin floor of ${percentage(input.targetMarginFloorPct)} is impossible to satisfy with a finite selling price.`
-      : typeof input.targetMarginFloorPct === "number" &&
-          input.floorPrice !== null &&
-          input.suggestedUnitPrice < input.floorPrice
-        ? `Warning: the proposed price is below the configured margin floor of ${percentage(input.targetMarginFloorPct)}.`
-        : typeof input.targetMarginFloorPct === "number" && input.floorPrice !== null
-          ? `This quote remains above the configured margin floor of ${percentage(input.targetMarginFloorPct)}.`
-          : null,
-    input.notes
-      ? `Notes: ${input.notes}`
-      : "Notes: Offer optional upsell, MOQ ladder, or faster-shipping surcharge if negotiation starts.",
-  ]
-    .filter(Boolean)
-    .join("\n")
-}
-
 /** Registers all seller-facing OpenClaw tools for this plugin instance. */
 export const registerSellerTools = (
   api: SellerToolApi,
@@ -916,8 +834,8 @@ export const registerSellerTools = (
       'Load store-level sales and inventory facts for a configured store. Always set "timeBasis": use "caller" for the user local calendar and pass "callerTimeZone", or use "store" when the user explicitly wants the store-local calendar. Use rangePreset for relative periods and startDate/endDate only for explicit dates. If storeId is omitted, use the configured default store.',
     parameters: SellerStoreOverviewParamsSchema,
     async execute(_id: string, params: SellerStoreOverviewParams) {
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
-      if (!configuredStore) {
+      const store = findConfiguredStore(pluginConfig, params.storeId)
+      if (!store) {
         throw new Error(
           "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_store_overview.",
         )
@@ -975,98 +893,46 @@ export const registerSellerTools = (
         )
       }
 
-      if (configuredStore.platform === "shopify") {
-        if (hasWindows) {
-          const requestedWindows = resolveStoreSalesSummaryWindows(windows)
-          const summary = await dependencies.loadShopifyStoreSalesSummary(configuredStore.store, {
-            timeBasis: params.timeBasis,
-            windows: requestedWindows,
-            callerTimeZone,
-            includeInventory: params.includeInventory,
-          })
+      if (hasWindows) {
+        const requestedWindows = resolveStoreSalesSummaryWindows(windows)
+        const summary = await dependencies.loadShopifyStoreSalesSummary(store, {
+          timeBasis: params.timeBasis,
+          windows: requestedWindows,
+          callerTimeZone,
+        })
 
-          return textResult(
-            formatStoreSalesSummary({
-              storeName: summary.storeName,
-              timezone: summary.timezone,
-              windowTimeZone: summary.windowTimeZone,
-              locale: pluginConfig.locale,
-              currencyCode: summary.currencyCode,
-              lines: summary.windows,
-              inventoryUnits: summary.inventoryUnits,
-              inventoryDaysLeft: summary.inventoryDaysLeft,
-              inventoryErrorMessage: summary.inventoryErrorMessage,
-            }),
-          )
-        }
-
-        let snapshot: ShopifyStoreOverviewSnapshot
-        try {
-          snapshot = await dependencies.loadShopifyStoreOverview(configuredStore.store, {
-            timeBasis: params.timeBasis,
-            rangePreset,
-            callerTimeZone,
-            startDate: params.startDate,
-            endDate: params.endDate,
-            includeInventory: params.includeInventory,
-          })
-        } catch (error) {
-          if (error instanceof Error && error.message.startsWith("Custom store overview")) {
-            return textResult(error.message)
-          }
-          throw error
-        }
         return textResult(
-          formatStoreOverview(snapshot, {
+          formatStoreSalesSummary({
+            storeName: summary.storeName,
+            timezone: summary.timezone,
+            windowTimeZone: summary.windowTimeZone,
             locale: pluginConfig.locale,
+            currencyCode: summary.currencyCode,
+            lines: summary.windows,
+            inventoryUnits: summary.inventoryUnits,
+            inventoryDaysLeft: summary.inventoryDaysLeft,
+            inventoryErrorMessage: summary.inventoryErrorMessage,
           }),
         )
       }
 
-      throw new Error(
-        `seller_store_overview is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
-      )
-    },
-  })
-
-  api.registerTool({
-    name: "seller_quote_builder",
-    label: "Seller Quote Builder",
-    description:
-      "Draft a seller-side RFQ or buyer reply with price guardrails, SLA, and commercial terms.",
-    parameters: SellerQuoteBuilderParamsSchema,
-    async execute(_id: string, params: SellerQuoteBuilderParams) {
-      const unitCost = toNumber(params.unitCost)
-      const suggestedUnitPrice = toNumber(params.suggestedUnitPrice)
-      const competitorUnitPrice = toNumber(params.competitorUnitPrice, suggestedUnitPrice)
-      const quantity = toNumber(params.quantity)
-      const shippingLeadDays = toNumber(params.shippingLeadDays, 7)
-      const floorPrice =
-        typeof pluginConfig.targetMarginFloorPct === "number"
-          ? minimumPriceForGrossMargin(unitCost, pluginConfig.targetMarginFloorPct)
-          : null
-      const marginPct = suggestedUnitPrice > 0 ? grossMarginPct(suggestedUnitPrice, unitCost) : 0
-      const pricePositioning =
-        suggestedUnitPrice <= competitorUnitPrice
-          ? "at or below market"
-          : "above the nearest market reference"
-      const tone = params.tone ?? pluginConfig.responseTone
-
+      let snapshot: ShopifyStoreOverviewSnapshot
+      try {
+        snapshot = await dependencies.loadShopifyStoreOverview(store, {
+          timeBasis: params.timeBasis,
+          rangePreset,
+          callerTimeZone,
+          startDate: params.startDate,
+          endDate: params.endDate,
+        })
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("Custom store overview")) {
+          return textResult(error.message)
+        }
+        throw error
+      }
       return textResult(
-        formatQuoteDraft({
-          buyerName: params.buyerName,
-          productName: params.productName,
-          quantity,
-          suggestedUnitPrice,
-          floorPrice,
-          marginPct,
-          pricePositioning,
-          shippingLeadDays,
-          paymentTerms: params.paymentTerms,
-          notes: params.notes,
-          tone,
-          targetMarginFloorPct: pluginConfig.targetMarginFloorPct,
-          currency: pluginConfig.currency,
+        formatStoreOverview(snapshot, {
           locale: pluginConfig.locale,
         }),
       )
@@ -1080,21 +946,15 @@ export const registerSellerTools = (
       "Look up current on-hand inventory for an exact SKU or product title search. Use this when the user asks how much inventory a product has. Try the tool before asking for an exact SKU. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. This tool reads Shopify inventory only and does not require order access.",
     parameters: SellerInventoryLookupParamsSchema,
     async execute(_id: string, params: SellerInventoryLookupParams) {
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
-      if (!configuredStore) {
+      const store = findConfiguredStore(pluginConfig, params.storeId)
+      if (!store) {
         throw new Error(
           "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_inventory_query.",
         )
       }
 
-      if (configuredStore.platform !== "shopify") {
-        throw new Error(
-          `seller_inventory_query is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
-        )
-      }
-
       const snapshot = await dependencies.loadShopifyInventorySnapshot(
-        configuredStore.store,
+        store,
         params.productRef,
         pluginConfig.locale,
       )
@@ -1112,22 +972,16 @@ export const registerSellerTools = (
       "Query recent product sales for an exact SKU or product title search. Use this when the user asks how much a product sold over a recent window. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm. This is a product-level sales tool, not a store-total sales tool.",
     parameters: SellerSalesLookupParamsSchema,
     async execute(_id: string, params: SellerSalesLookupParams) {
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
-      if (!configuredStore) {
+      const store = findConfiguredStore(pluginConfig, params.storeId)
+      if (!store) {
         throw new Error(
           "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_sales_query.",
         )
       }
 
-      if (configuredStore.platform !== "shopify") {
-        throw new Error(
-          `seller_sales_query is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
-        )
-      }
-
-      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
+      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, store)
       const snapshot = await dependencies.loadShopifySalesSnapshot(
-        configuredStore.store,
+        store,
         params.productRef,
         salesLookbackDays,
         pluginConfig.locale,
@@ -1146,22 +1000,17 @@ export const registerSellerTools = (
       "Return conservative replenishment guidance for one product using Shopify-backed inventory and recent sales. Use this for questions about whether to restock or reorder a product. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
     parameters: SellerReplenishmentDecisionParamsSchema,
     async execute(_id: string, params: SellerReplenishmentDecisionParams) {
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
-      if (!configuredStore) {
+      const store = findConfiguredStore(pluginConfig, params.storeId)
+      if (!store) {
         return needsInputResult({
           userPrompt:
             "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_replenishment_decision.",
         })
       }
-      if (configuredStore.platform !== "shopify") {
-        throw new Error(
-          `seller_replenishment_decision is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
-        )
-      }
 
-      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
+      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, store)
       const snapshot = await dependencies.loadShopifyProductActionSnapshot(
-        configuredStore.store,
+        store,
         params.productRef,
         salesLookbackDays,
         pluginConfig.locale,
@@ -1176,11 +1025,9 @@ export const registerSellerTools = (
       }
 
       const configuredSupplierLeadDays =
-        params.supplierLeadDays ??
-        resolveOptionalConfiguredNumber(configuredStore, "supplierLeadDays")
+        params.supplierLeadDays ?? resolveOptionalConfiguredNumber(store, "supplierLeadDays")
       const configuredSafetyStockDays =
-        params.safetyStockDays ??
-        resolveOptionalConfiguredNumber(configuredStore, "safetyStockDays")
+        params.safetyStockDays ?? resolveOptionalConfiguredNumber(store, "safetyStockDays")
       const replenishmentInputs = resolveProductActionReplenishmentInputs({
         supplierLeadDays: configuredSupplierLeadDays,
         safetyStockDays: configuredSafetyStockDays,
@@ -1212,22 +1059,17 @@ export const registerSellerTools = (
       "Return conservative discount guidance for one product using Shopify-backed inventory, recent sales, and margin data when available. Use this for questions about markdowns or price testing on a product. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
     parameters: SellerDiscountDecisionParamsSchema,
     async execute(_id: string, params: SellerDiscountDecisionParams) {
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
-      if (!configuredStore) {
+      const store = findConfiguredStore(pluginConfig, params.storeId)
+      if (!store) {
         return needsInputResult({
           userPrompt:
             "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_discount_decision.",
         })
       }
-      if (configuredStore.platform !== "shopify") {
-        throw new Error(
-          `seller_discount_decision is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
-        )
-      }
 
-      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
+      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, store)
       const snapshot = await dependencies.loadShopifyProductActionSnapshot(
-        configuredStore.store,
+        store,
         params.productRef,
         salesLookbackDays,
         pluginConfig.locale,
@@ -1265,22 +1107,17 @@ export const registerSellerTools = (
       "Return conservative clearance guidance for one product using Shopify-backed inventory, recent sales, and margin data when available. Use this for questions about clearing aged inventory on a product. Exact or unique matches can resolve automatically; ambiguous title searches should return choices for the user to confirm.",
     parameters: SellerClearanceDecisionParamsSchema,
     async execute(_id: string, params: SellerClearanceDecisionParams) {
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
-      if (!configuredStore) {
+      const store = findConfiguredStore(pluginConfig, params.storeId)
+      if (!store) {
         return needsInputResult({
           userPrompt:
             "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_clearance_decision.",
         })
       }
-      if (configuredStore.platform !== "shopify") {
-        throw new Error(
-          `seller_clearance_decision is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
-        )
-      }
 
-      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
+      const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, store)
       const snapshot = await dependencies.loadShopifyProductActionSnapshot(
-        configuredStore.store,
+        store,
         params.productRef,
         salesLookbackDays,
         pluginConfig.locale,

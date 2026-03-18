@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { describe, it, mock } from "node:test"
 import {
   evaluateClearanceDecision,
   evaluateDiscountDecision,
+  loadShopifyStoreOverview,
   resolveStoreOverviewWindow,
   type ShopifyProductActionSnapshot,
 } from "./shopify.ts"
@@ -29,6 +30,50 @@ const createSnapshot = (
   ...overrides,
 })
 
+const TEST_SHOPIFY_SECRET_ENV = "TEST_SHOPIFY_CLIENT_SECRET"
+
+const TEST_SHOPIFY_STORE = {
+  id: "shopify-test",
+  name: "Test Shopify Store",
+  storeDomain: "example.myshopify.com",
+  clientId: "test-client-id",
+  clientSecretEnv: TEST_SHOPIFY_SECRET_ENV,
+}
+
+const createJsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json",
+    },
+  })
+
+const getRequestUrl = (input: string | URL | Request) => {
+  if (typeof input === "string") {
+    return input
+  }
+
+  if (input instanceof URL) {
+    return input.toString()
+  }
+
+  return input.url
+}
+
+const getGraphQLQuery = (init?: RequestInit) => {
+  if (typeof init?.body !== "string") {
+    return ""
+  }
+
+  const payload: unknown = JSON.parse(init.body)
+  if (!payload || typeof payload !== "object") {
+    return ""
+  }
+
+  const query = Reflect.get(payload, "query")
+  return typeof query === "string" ? query : ""
+}
+
 describe("resolveStoreOverviewWindow", () => {
   it("anchors relative today to the store timezone instead of the caller timezone", () => {
     const now = new Date("2026-03-18T00:30:00+08:00")
@@ -50,6 +95,98 @@ describe("resolveStoreOverviewWindow", () => {
     assert.equal(window.start, "2026-03-17T16:00:00.000Z")
     assert.equal(window.end, "2026-03-18T16:00:00.000Z")
     assert.equal(window.dayCount, 1)
+  })
+})
+
+describe("loadShopifyStoreOverview", () => {
+  it("returns sales facts when inventory totals are unavailable", async () => {
+    process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
+
+    const fetchMock = mock.method(
+      globalThis,
+      "fetch",
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getRequestUrl(input)
+        if (url === "https://example.myshopify.com/admin/oauth/access_token") {
+          return createJsonResponse({
+            access_token: "test-access-token",
+          })
+        }
+
+        if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {
+          const query = getGraphQLQuery(init)
+
+          if (query.includes("SellerHealthShop")) {
+            return createJsonResponse({
+              data: {
+                shop: {
+                  name: "Test Shopify Store",
+                  currencyCode: "USD",
+                  ianaTimezone: "America/New_York",
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerHealthVariantsPage")) {
+            return createJsonResponse({
+              errors: [
+                {
+                  message: "Missing access scope read_products",
+                },
+              ],
+            })
+          }
+
+          if (query.includes("SellerHealthOrdersPage")) {
+            return createJsonResponse({
+              data: {
+                orders: {
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: null,
+                  },
+                  nodes: [
+                    {
+                      createdAt: "2026-03-17T16:00:00.000Z",
+                      currentTotalPriceSet: {
+                        shopMoney: {
+                          amount: "123.45",
+                          currencyCode: "USD",
+                        },
+                      },
+                      currentSubtotalLineItemsQuantity: 7,
+                    },
+                  ],
+                },
+              },
+            })
+          }
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      },
+    )
+
+    try {
+      const snapshot = await loadShopifyStoreOverview(TEST_SHOPIFY_STORE, {
+        timeBasis: "store",
+        startDate: "2026-03-17",
+        endDate: "2026-03-17",
+      })
+
+      assert.equal(snapshot.storeName, "Test Shopify Store")
+      assert.equal(snapshot.windowLabel, "2026-03-17 to 2026-03-17")
+      assert.equal(snapshot.ordersCount, 1)
+      assert.equal(snapshot.unitsSold, 7)
+      assert.equal(snapshot.revenue, 123.45)
+      assert.equal(snapshot.inventoryUnits, undefined)
+      assert.equal(snapshot.inventoryDaysLeft, undefined)
+      assert.match(snapshot.inventoryErrorMessage ?? "", /read_products/i)
+    } finally {
+      fetchMock.mock.restore()
+      delete process.env[TEST_SHOPIFY_SECRET_ENV]
+    }
   })
 })
 

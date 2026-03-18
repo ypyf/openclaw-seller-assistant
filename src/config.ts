@@ -4,9 +4,7 @@ type DefaultPluginConfig = {
   currency: string
   locale: string
   timeZone: string
-  lowInventoryDays: number
   salesLookbackDays: number
-  responseTone: "concise" | "consultative" | "premium"
 }
 
 export type ProductDecisionPolicy = {
@@ -27,9 +25,7 @@ export const DEFAULT_PLUGIN_CONFIG: DefaultPluginConfig = {
   currency: "USD",
   locale: "en-US",
   timeZone: "UTC",
-  lowInventoryDays: 14,
   salesLookbackDays: 30,
-  responseTone: "consultative",
 }
 
 /** Built-in defaults for product decision thresholds. */
@@ -60,22 +56,14 @@ export type ShopifyStoreConfig = {
   operations?: ShopifyStoreOperationsConfig
 }
 
-/** A configured store entry resolved to a supported platform shape. */
-export type ConfiguredStore =
-  | { platform: "shopify"; store: ShopifyStoreConfig }
-  | { platform: "amazon"; store: Record<string, unknown> }
-
 type RawPluginConfig = {
   currency?: string
   locale?: string
   targetMarginFloorPct?: number
-  lowInventoryDays?: number
   decisionPolicy?: RawProductDecisionPolicy
-  responseTone?: "concise" | "consultative" | "premium"
   defaultStoreId?: string
   stores?: {
     shopify?: ShopifyStoreConfig[]
-    amazon?: Record<string, unknown>[]
   }
 } & Record<string, unknown>
 
@@ -85,14 +73,11 @@ export type PluginConfig = {
   currency: string
   /** Display locale used when formatting dates, numbers, and currency output. */
   locale: string
-  lowInventoryDays: number
   decisionPolicy: ProductDecisionPolicy
-  responseTone: "concise" | "consultative" | "premium"
   targetMarginFloorPct?: number
   defaultStoreId?: string
   stores?: {
     shopify?: ShopifyStoreConfig[]
-    amazon?: Record<string, unknown>[]
   }
 } & Record<string, unknown>
 
@@ -164,9 +149,7 @@ export const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): Pl
     ...rawConfig,
     currency: rawConfig.currency ?? DEFAULT_PLUGIN_CONFIG.currency,
     locale: rawConfig.locale ?? DEFAULT_PLUGIN_CONFIG.locale,
-    lowInventoryDays: rawConfig.lowInventoryDays ?? DEFAULT_PLUGIN_CONFIG.lowInventoryDays,
     decisionPolicy: normalizeProductDecisionPolicy(rawConfig.decisionPolicy),
-    responseTone: rawConfig.responseTone ?? DEFAULT_PLUGIN_CONFIG.responseTone,
     targetMarginFloorPct:
       typeof rawConfig.targetMarginFloorPct === "number"
         ? rawConfig.targetMarginFloorPct
@@ -176,41 +159,32 @@ export const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): Pl
 
 const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : [])
 
-/** Resolves the active store from an explicit id, the configured default, or the first store. */
+/** Resolves the active Shopify store from an explicit id, the configured default, or the first store. */
 export const findConfiguredStore = (
   config: PluginConfig,
   storeId?: string,
-): ConfiguredStore | null => {
-  const groupedStores: ConfiguredStore[] = [
-    ...toArray<ShopifyStoreConfig>(config?.stores?.shopify)
-      .filter(Boolean)
-      .map(store => ({ platform: "shopify" as const, store })),
-    ...toArray<Record<string, unknown>>(config?.stores?.amazon)
-      .filter(Boolean)
-      .map(store => ({ platform: "amazon" as const, store })),
-  ]
+): ShopifyStoreConfig | null => {
+  const configuredStores = toArray<ShopifyStoreConfig>(config?.stores?.shopify).filter(Boolean)
 
   if (storeId) {
-    return groupedStores.find(entry => entry.store.id === storeId) ?? null
+    return configuredStores.find(store => store.id === storeId) ?? null
   }
 
   if (config?.defaultStoreId) {
-    return groupedStores.find(entry => entry.store.id === config.defaultStoreId) ?? null
+    return configuredStores.find(store => store.id === config.defaultStoreId) ?? null
   }
 
-  return groupedStores[0] ?? null
+  return configuredStores[0] ?? null
 }
 
 /** Reads a numeric store-level operation setting when present and returns undefined otherwise. */
 export const getStoreOperationNumber = (
-  configuredStore: ConfiguredStore | null,
+  configuredStore: ShopifyStoreConfig | null,
   key: "supplierLeadDays" | "safetyStockDays" | "salesLookbackDays",
 ) => {
-  if (configuredStore?.platform === "shopify") {
-    const storeValue = configuredStore.store.operations?.[key]
-    if (typeof storeValue === "number" && Number.isFinite(storeValue)) {
-      return storeValue
-    }
+  const storeValue = configuredStore?.operations?.[key]
+  if (typeof storeValue === "number" && Number.isFinite(storeValue)) {
+    return storeValue
   }
 
   return undefined

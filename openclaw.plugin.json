@@ -1,7 +1,7 @@
 {
   "id": "seller-assistant",
   "name": "Seller Assistant",
-  "description": "Seller assistant tools for pricing, RFQ replies, inventory checks, and campaign planning.",
+  "description": "Seller assistant tools for Shopify sales, inventory, replenishment, discount, and clearance workflows.",
   "version": "2026.3.18",
   "skills": ["./skills"],
   "configSchema": {
@@ -10,7 +10,7 @@
     "properties": {
       "currency": {
         "type": "string",
-        "description": "Display currency fallback used when a tool output does not have an explicit business currency from source data, such as quote drafts or manual-input planning contexts.",
+        "description": "Display currency fallback used when a tool output does not have an explicit business currency from source data.",
         "default": "USD"
       },
       "locale": {
@@ -21,12 +21,7 @@
       "targetMarginFloorPct": {
         "type": "number",
         "exclusiveMaximum": 100,
-        "description": "Optional configured gross-margin floor percentage used for quote guardrails and discount / clearance decision checks. Values must stay below 100."
-      },
-      "lowInventoryDays": {
-        "type": "number",
-        "description": "Inventory days-of-cover threshold that triggers low-stock warnings.",
-        "default": 14
+        "description": "Optional configured gross-margin floor percentage used for discount and clearance decision guardrails. Values must stay below 100."
       },
       "decisionPolicy": {
         "type": "object",
@@ -82,12 +77,6 @@
             "default": 0.1
           }
         }
-      },
-      "responseTone": {
-        "type": "string",
-        "description": "Shared response tone for seller-facing draft outputs.",
-        "default": "consultative",
-        "enum": ["concise", "consultative", "premium"]
       },
       "defaultStoreId": {
         "type": "string",
@@ -145,65 +134,6 @@
                 }
               },
               "required": ["id", "name", "storeDomain", "clientId", "clientSecretEnv"]
-            }
-          },
-          "amazon": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "region": {
-                  "type": "string",
-                  "enum": ["na", "eu", "fe"]
-                },
-                "marketplaceId": {
-                  "type": "string"
-                },
-                "sellerId": {
-                  "type": "string"
-                },
-                "refreshTokenEnv": {
-                  "type": "string"
-                },
-                "lwaClientIdEnv": {
-                  "type": "string"
-                },
-                "lwaClientSecretEnv": {
-                  "type": "string"
-                },
-                "awsAccessKeyIdEnv": {
-                  "type": "string"
-                },
-                "awsSecretAccessKeyEnv": {
-                  "type": "string"
-                },
-                "awsRegion": {
-                  "type": "string"
-                },
-                "roleArn": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "name",
-                "region",
-                "marketplaceId",
-                "sellerId",
-                "refreshTokenEnv",
-                "lwaClientIdEnv",
-                "lwaClientSecretEnv",
-                "awsAccessKeyIdEnv",
-                "awsSecretAccessKeyEnv",
-                "awsRegion"
-              ]
             }
           }
         }

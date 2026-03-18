@@ -52,9 +52,7 @@ const formatOptions = {
 const createPluginConfig = (): PluginConfig => ({
   currency: "USD",
   locale: "en-US",
-  lowInventoryDays: 14,
   decisionPolicy: DEFAULT_PRODUCT_DECISION_POLICY,
-  responseTone: "consultative",
   defaultStoreId: "shopify-us",
   stores: {
     shopify: [
@@ -163,7 +161,7 @@ type CapturedTool = {
   execute: (id: string, params: Record<string, unknown>) => Promise<unknown>
 }
 
-const createToolHarness = () => {
+const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> = {}) => {
   const overviewCalls: Array<Record<string, unknown>> = []
   const summaryCalls: Array<Record<string, unknown>> = []
   const salesCalls: Array<{
@@ -184,7 +182,7 @@ const createToolHarness = () => {
     },
   }
 
-  const dependencies: SellerToolDependencies = {
+  const defaultDependencies: SellerToolDependencies = {
     async loadShopifyStoreOverview(_store, options) {
       overviewCalls.push({ ...options })
       const windowLabel =
@@ -207,7 +205,6 @@ const createToolHarness = () => {
         timeBasis: options.timeBasis,
         windows: [...options.windows],
         callerTimeZone: options.callerTimeZone,
-        includeInventory: options.includeInventory,
       })
 
       return createStoreSalesSummarySnapshot({
@@ -241,6 +238,11 @@ const createToolHarness = () => {
     },
   }
 
+  const dependencies: SellerToolDependencies = {
+    ...defaultDependencies,
+    ...dependencyOverrides,
+  }
+
   registerSellerTools(api, createPluginConfig(), dependencies)
 
   const getTool = (name: string) => {
@@ -265,6 +267,7 @@ describe("registerSellerTools", () => {
 
     assert.ok(toolNames.includes("seller_store_overview"))
     assert.ok(toolNames.includes("seller_sales_query"))
+    assert.ok(!toolNames.includes("seller_quote_builder"))
     assert.ok(!toolNames.includes("seller_store_sales_summary"))
   })
 
@@ -286,6 +289,34 @@ describe("registerSellerTools", () => {
     assert.match(text, /^Store timezone: America\/New_York$/m)
     assert.doesNotMatch(text, /^Window timezone:/m)
     assert.doesNotMatch(text, /sales summary:/i)
+  })
+
+  it("returns store sales facts even when inventory totals are unavailable", async () => {
+    const harness = createToolHarness({
+      async loadShopifyStoreOverview(_store, options) {
+        harness.overviewCalls.push({ ...options })
+        return createStoreOverviewSnapshot({
+          inventoryUnits: undefined,
+          inventoryDaysLeft: undefined,
+          inventoryErrorMessage: "Missing access scope read_products",
+        })
+      },
+    })
+    const tool = harness.getTool("seller_store_overview")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        timeBasis: "store",
+      }),
+    )
+
+    assert.equal(harness.overviewCalls.length, 1)
+    assert.match(text, /^Revenue: \$123\.45$/m)
+    assert.match(text, /^Orders: 4$/m)
+    assert.match(text, /^Units sold: 7$/m)
+    assert.match(text, /^Inventory: unavailable \(Missing access scope read_products\)$/m)
+    assert.doesNotMatch(text, /^Inventory units:/m)
+    assert.doesNotMatch(text, /^Inventory cover:/m)
   })
 
   it("accepts mixed-case range presets in schema and normalizes them at execution", async () => {
@@ -315,7 +346,6 @@ describe("registerSellerTools", () => {
         callerTimeZone: undefined,
         startDate: undefined,
         endDate: undefined,
-        includeInventory: undefined,
       },
     ])
     assert.equal(harness.summaryCalls.length, 0)
@@ -340,7 +370,6 @@ describe("registerSellerTools", () => {
         callerTimeZone: undefined,
         startDate: undefined,
         endDate: undefined,
-        includeInventory: undefined,
       },
     ])
     assert.equal(harness.summaryCalls.length, 0)
@@ -372,7 +401,6 @@ describe("registerSellerTools", () => {
         timeBasis: "store",
         windows: ["today", "last_7_days"],
         callerTimeZone: undefined,
-        includeInventory: undefined,
       },
     ])
   })
@@ -396,7 +424,6 @@ describe("registerSellerTools", () => {
         callerTimeZone: "Asia/Shanghai",
         startDate: undefined,
         endDate: undefined,
-        includeInventory: undefined,
       },
     ])
     assert.match(text, /^Window timezone: Asia\/Shanghai$/m)
@@ -422,7 +449,6 @@ describe("registerSellerTools", () => {
         callerTimeZone: undefined,
         startDate: "2026-03-01",
         endDate: "2026-03-07",
-        includeInventory: undefined,
       },
     ])
     assert.equal(harness.summaryCalls.length, 0)
@@ -446,7 +472,6 @@ describe("registerSellerTools", () => {
         timeBasis: "store",
         windows: ["today", "last_7_days"],
         callerTimeZone: undefined,
-        includeInventory: undefined,
       },
     ])
     assert.match(
@@ -475,7 +500,6 @@ describe("registerSellerTools", () => {
         timeBasis: "caller",
         windows: ["today", "last_7_days"],
         callerTimeZone: "Asia/Shanghai",
-        includeInventory: undefined,
       },
     ])
     assert.match(text, /^Window timezone: Asia\/Shanghai$/m)
@@ -507,7 +531,6 @@ describe("registerSellerTools", () => {
           "last_365_days",
         ],
         callerTimeZone: undefined,
-        includeInventory: undefined,
       },
     ])
     assert.match(
