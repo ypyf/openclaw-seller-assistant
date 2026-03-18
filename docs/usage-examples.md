@@ -2,7 +2,7 @@
 
 These examples show representative natural-language prompts for each seller capability.
 
-## Store Overview
+## Store Sales
 
 - "How much did my store sell today?"
 - "How much did my store sell yesterday?"
@@ -10,12 +10,9 @@ These examples show representative natural-language prompts for each seller capa
 - "Show store overview for my default store over the last 30 days."
 - "Show store overview for my default store over the last year."
 - "Show store overview for store shopify-us from 2026-03-01 to 2026-03-07."
-- "Check store health for my default store."
-
-## Store Sales Summary
-
 - "Show a store sales summary for my default store."
 - "How did shopify-us sell today, yesterday, last 7 days, and last year?"
+- "Check store health for my default store."
 
 ## Inventory Lookup
 

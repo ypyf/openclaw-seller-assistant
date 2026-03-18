@@ -1,5 +1,6 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
+import type { AgentToolResult } from "@mariozechner/pi-agent-core"
 import { Type, type Static } from "@sinclair/typebox"
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
 import {
   DEFAULT_PLUGIN_CONFIG,
   findConfiguredStore,
@@ -94,35 +95,16 @@ const SellerStoreOverviewParamsSchema = Type.Object(
           'Optional custom end date in "YYYY-MM-DD". Use together with startDate instead of rangePreset.',
       }),
     ),
+    windows: Type.Optional(
+      Type.Array(StoreOverviewRangePresetSchema, {
+        description:
+          "Optional standard summary windows to include. Use this for multi-window store sales summaries. If omitted, seller_store_overview stays in single-window overview mode. Pass an empty array to request the default full summary window set.",
+      }),
+    ),
     includeInventory: Type.Optional(
       Type.Boolean({
         description:
           "Whether to include total inventory units and inventory cover in the store overview. Defaults to true.",
-      }),
-    ),
-  },
-  { additionalProperties: false },
-)
-
-const SellerStoreSalesSummaryParamsSchema = Type.Object(
-  {
-    storeId: Type.Optional(
-      Type.String({
-        description:
-          "Optional configured store id. If omitted, use defaultStoreId or the first configured store.",
-      }),
-    ),
-    windows: Type.Optional(
-      Type.Array(StoreOverviewRangePresetSchema, {
-        description:
-          "Optional standard summary windows to include. If omitted, include today, yesterday, and the standard rolling windows through last_365_days.",
-        minItems: 1,
-      }),
-    ),
-    includeInventory: Type.Optional(
-      Type.Boolean({
-        description:
-          "Whether to include inventory units and inventory cover from the longest successfully loaded window. Defaults to true.",
       }),
     ),
   },
@@ -239,7 +221,6 @@ const SellerClearanceDecisionParamsSchema = Type.Object(
 )
 
 type SellerStoreOverviewParams = Static<typeof SellerStoreOverviewParamsSchema>
-type SellerStoreSalesSummaryParams = Static<typeof SellerStoreSalesSummaryParamsSchema>
 type SellerQuoteBuilderParams = Static<typeof SellerQuoteBuilderParamsSchema>
 type SellerInventoryLookupParams = Static<typeof SellerInventoryLookupParamsSchema>
 type SellerSalesLookupParams = Static<typeof SellerSalesLookupParamsSchema>
@@ -268,8 +249,39 @@ const resolveSalesLookbackDays = (
   )
 
 const resolveStoreSalesSummaryWindows = (windows?: StoreOverviewRangePreset[]) => {
+  if (!windows || windows.length === 0) {
+    return [...STORE_SALES_SUMMARY_WINDOW_ORDER]
+  }
   const requestedWindows = new Set(windows ?? STORE_SALES_SUMMARY_WINDOW_ORDER)
   return STORE_SALES_SUMMARY_WINDOW_ORDER.filter(window => requestedWindows.has(window))
+}
+
+type SellerToolRegistration<TParams> = {
+  name: string
+  label: string
+  description: string
+  parameters: unknown
+  execute: (id: string, params: TParams) => Promise<AgentToolResult<unknown>>
+}
+
+export type SellerToolApi = {
+  registerTool: <TParams>(tool: SellerToolRegistration<TParams>) => void
+}
+
+export type SellerToolDependencies = {
+  loadShopifyStoreOverview: typeof loadShopifyStoreOverview
+  loadShopifyStoreSalesSummary: typeof loadShopifyStoreSalesSummary
+  loadShopifyInventorySnapshot: typeof loadShopifyInventorySnapshot
+  loadShopifySalesSnapshot: typeof loadShopifySalesSnapshot
+  loadShopifyProductActionSnapshot: typeof loadShopifyProductActionSnapshot
+}
+
+const DEFAULT_SELLER_TOOL_DEPENDENCIES: SellerToolDependencies = {
+  loadShopifyStoreOverview,
+  loadShopifyStoreSalesSummary,
+  loadShopifyInventorySnapshot,
+  loadShopifySalesSnapshot,
+  loadShopifyProductActionSnapshot,
 }
 
 const formatInventoryLookup = (input: ShopifyInventorySnapshot) =>
@@ -821,12 +833,16 @@ const formatQuoteDraft = (input: {
 }
 
 /** Registers all seller-facing OpenClaw tools for this plugin instance. */
-export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: PluginConfig) => {
+export const registerSellerTools = (
+  api: SellerToolApi,
+  pluginConfig: PluginConfig,
+  dependencies: SellerToolDependencies = DEFAULT_SELLER_TOOL_DEPENDENCIES,
+) => {
   api.registerTool({
     name: "seller_store_overview",
     label: "Seller Store Overview",
     description:
-      "Load store-level sales and inventory facts for a configured store. Use this for questions like today's sales, yesterday's sales, or recent store totals over standard windows such as the last 7, 30, 60, 90, 180, or 365 days. If storeId is omitted, use the configured default store.",
+      "Load store-level sales and inventory facts for a configured store. Use single-window mode for one store window with rangePreset or custom dates, or multi-window summary mode with windows for standard comparative windows. If storeId is omitted, use the configured default store.",
     parameters: SellerStoreOverviewParamsSchema,
     async execute(_id: string, params: SellerStoreOverviewParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
@@ -836,7 +852,21 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
+      const hasWindows = Array.isArray(params.windows)
       const hasCustomRange = Boolean(params.startDate || params.endDate)
+
+      if (hasWindows && params.rangePreset) {
+        return textResult(
+          'Use either "windows" or "rangePreset" for seller_store_overview, not both.',
+        )
+      }
+
+      if (hasWindows && hasCustomRange) {
+        return textResult(
+          'Use either "windows" or "startDate"/"endDate" for seller_store_overview, not both.',
+        )
+      }
+
       if (hasCustomRange && (!params.startDate || !params.endDate)) {
         return textResult(
           'Ask the user for both "startDate" and "endDate" in YYYY-MM-DD format, or use a range preset such as today, yesterday, last_7_days, last_30_days, last_60_days, last_90_days, last_180_days, or last_365_days.',
@@ -850,9 +880,30 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       }
 
       if (configuredStore.platform === "shopify") {
+        if (hasWindows) {
+          const requestedWindows = resolveStoreSalesSummaryWindows(params.windows)
+          const summary = await dependencies.loadShopifyStoreSalesSummary(configuredStore.store, {
+            windows: requestedWindows,
+            includeInventory: params.includeInventory,
+          })
+
+          return textResult(
+            formatStoreSalesSummary({
+              storeName: summary.storeName,
+              timezone: summary.timezone,
+              locale: pluginConfig.locale,
+              currencyCode: summary.currencyCode,
+              lines: summary.windows,
+              inventoryUnits: summary.inventoryUnits,
+              inventoryDaysLeft: summary.inventoryDaysLeft,
+              inventoryErrorMessage: summary.inventoryErrorMessage,
+            }),
+          )
+        }
+
         let snapshot: ShopifyStoreOverviewSnapshot
         try {
-          snapshot = await loadShopifyStoreOverview(configuredStore.store, {
+          snapshot = await dependencies.loadShopifyStoreOverview(configuredStore.store, {
             rangePreset: params.rangePreset,
             startDate: params.startDate,
             endDate: params.endDate,
@@ -873,47 +924,6 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
 
       throw new Error(
         `seller_store_overview is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
-      )
-    },
-  })
-
-  api.registerTool({
-    name: "seller_store_sales_summary",
-    label: "Seller Store Sales Summary",
-    description:
-      "Load a multi-window store sales summary as final plain text. Use this for store sales overviews and standard summaries across windows such as today, yesterday, last 7 days, last 30 days, last 60 days, last 90 days, last 180 days, and last 365 days.",
-    parameters: SellerStoreSalesSummaryParamsSchema,
-    async execute(_id: string, params: SellerStoreSalesSummaryParams) {
-      const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
-      if (!configuredStore) {
-        throw new Error(
-          "Ask the user to configure a store in plugins.entries.seller-assistant.config before running seller_store_sales_summary.",
-        )
-      }
-
-      if (configuredStore.platform === "shopify") {
-        const requestedWindows = resolveStoreSalesSummaryWindows(params.windows)
-        const summary = await loadShopifyStoreSalesSummary(configuredStore.store, {
-          windows: requestedWindows,
-          includeInventory: params.includeInventory,
-        })
-
-        return textResult(
-          formatStoreSalesSummary({
-            storeName: summary.storeName,
-            timezone: summary.timezone,
-            locale: pluginConfig.locale,
-            currencyCode: summary.currencyCode,
-            lines: summary.windows,
-            inventoryUnits: summary.inventoryUnits,
-            inventoryDaysLeft: summary.inventoryDaysLeft,
-            inventoryErrorMessage: summary.inventoryErrorMessage,
-          }),
-        )
-      }
-
-      throw new Error(
-        `seller_store_sales_summary is not implemented yet for the configured ${configuredStore.platform} store "${configuredStore.store.id}".`,
       )
     },
   })
@@ -982,7 +992,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
         )
       }
 
-      const snapshot = await loadShopifyInventorySnapshot(
+      const snapshot = await dependencies.loadShopifyInventorySnapshot(
         configuredStore.store,
         params.productRef,
         pluginConfig.locale,
@@ -1015,7 +1025,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       }
 
       const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
-      const snapshot = await loadShopifySalesSnapshot(
+      const snapshot = await dependencies.loadShopifySalesSnapshot(
         configuredStore.store,
         params.productRef,
         salesLookbackDays,
@@ -1049,7 +1059,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       }
 
       const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
-      const snapshot = await loadShopifyProductActionSnapshot(
+      const snapshot = await dependencies.loadShopifyProductActionSnapshot(
         configuredStore.store,
         params.productRef,
         salesLookbackDays,
@@ -1115,7 +1125,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       }
 
       const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
-      const snapshot = await loadShopifyProductActionSnapshot(
+      const snapshot = await dependencies.loadShopifyProductActionSnapshot(
         configuredStore.store,
         params.productRef,
         salesLookbackDays,
@@ -1168,7 +1178,7 @@ export const registerSellerTools = (api: OpenClawPluginApi, pluginConfig: Plugin
       }
 
       const salesLookbackDays = resolveSalesLookbackDays(params.salesLookbackDays, configuredStore)
-      const snapshot = await loadShopifyProductActionSnapshot(
+      const snapshot = await dependencies.loadShopifyProductActionSnapshot(
         configuredStore.store,
         params.productRef,
         salesLookbackDays,
