@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import { Value } from "@sinclair/typebox/value"
 import { DEFAULT_PRODUCT_DECISION_POLICY, type PluginConfig } from "./config.ts"
 import {
   evaluateClearanceDecision,
@@ -78,6 +79,7 @@ const createStoreOverviewSnapshot = (
   retrievedAtIso: "2026-03-18T09:30:00.000Z",
   storeName: "US Shopify Store",
   timezone: "America/New_York",
+  windowTimeZone: "America/New_York",
   currencyCode: "USD",
   windowLabel: "Today",
   ordersCount: 4,
@@ -96,6 +98,7 @@ const createStoreSalesSummarySnapshot = (
   retrievedAtIso: "2026-03-18T09:30:00.000Z",
   storeName: "US Shopify Store",
   timezone: "America/New_York",
+  windowTimeZone: "America/New_York",
   currencyCode: "USD",
   windows: [
     {
@@ -156,6 +159,7 @@ const extractToolText = async (resultPromise: Promise<unknown>) => {
 type CapturedTool = {
   name: string
   description: string
+  parameters: unknown
   execute: (id: string, params: Record<string, unknown>) => Promise<unknown>
 }
 
@@ -174,6 +178,7 @@ const createToolHarness = () => {
       tools.push({
         name: tool.name,
         description: tool.description,
+        parameters: tool.parameters,
         execute: (id, params) => tool.execute(id, params as never),
       })
     },
@@ -191,15 +196,25 @@ const createToolHarness = () => {
 
       return createStoreOverviewSnapshot({
         windowLabel,
+        windowTimeZone:
+          options.timeBasis === "caller"
+            ? (options.callerTimeZone ?? "America/New_York")
+            : "America/New_York",
       })
     },
     async loadShopifyStoreSalesSummary(_store, options) {
       summaryCalls.push({
+        timeBasis: options.timeBasis,
         windows: [...options.windows],
+        callerTimeZone: options.callerTimeZone,
         includeInventory: options.includeInventory,
       })
 
       return createStoreSalesSummarySnapshot({
+        windowTimeZone:
+          options.timeBasis === "caller"
+            ? (options.callerTimeZone ?? "America/New_York")
+            : "America/New_York",
         windows: options.windows.map((rangePreset, index) => ({
           rangePreset,
           windowLabel: rangePreset,
@@ -257,29 +272,47 @@ describe("registerSellerTools", () => {
     const harness = createToolHarness()
     const tool = harness.getTool("seller_store_overview")
 
-    const text = await extractToolText(tool.execute("tool-call", {}))
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        timeBasis: "store",
+      }),
+    )
 
     assert.equal(harness.overviewCalls.length, 1)
     assert.equal(harness.summaryCalls.length, 0)
     assert.match(text, /^Source: shopify/m)
     assert.match(text, /^Window: Today$/m)
     assert.match(text, /^Revenue: \$123\.45$/m)
+    assert.match(text, /^Store timezone: America\/New_York$/m)
+    assert.doesNotMatch(text, /^Window timezone:/m)
     assert.doesNotMatch(text, /sales summary:/i)
   })
 
-  it("uses single-window overview mode for range presets", async () => {
+  it("accepts mixed-case range presets in schema and normalizes them at execution", async () => {
     const harness = createToolHarness()
     const tool = harness.getTool("seller_store_overview")
 
+    assert.equal(
+      Value.Check(tool.parameters as never, {
+        timeBasis: "store",
+        rangePreset: "Last_7_Days",
+        windows: ["Today", "LAST_30_DAYS"],
+      }),
+      true,
+    )
+
     const text = await extractToolText(
       tool.execute("tool-call", {
-        rangePreset: "last_7_days",
+        timeBasis: "store",
+        rangePreset: "Last_7_Days",
       }),
     )
 
     assert.deepEqual(harness.overviewCalls, [
       {
+        timeBasis: "store",
         rangePreset: "last_7_days",
+        callerTimeZone: undefined,
         startDate: undefined,
         endDate: undefined,
         includeInventory: undefined,
@@ -289,12 +322,94 @@ describe("registerSellerTools", () => {
     assert.match(text, /^Window: Last 7 days$/m)
   })
 
+  it("uses single-window overview mode for range presets", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_store_overview")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        timeBasis: "store",
+        rangePreset: "last_7_days",
+      }),
+    )
+
+    assert.deepEqual(harness.overviewCalls, [
+      {
+        timeBasis: "store",
+        rangePreset: "last_7_days",
+        callerTimeZone: undefined,
+        startDate: undefined,
+        endDate: undefined,
+        includeInventory: undefined,
+      },
+    ])
+    assert.equal(harness.summaryCalls.length, 0)
+    assert.match(text, /^Window: Last 7 days$/m)
+  })
+
+  it("accepts uppercase summary windows and normalizes them before loading the summary", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_store_overview")
+
+    assert.equal(
+      Value.Check(tool.parameters as never, {
+        timeBasis: "store",
+        windows: ["TODAY", "LAST_7_DAYS"],
+      }),
+      true,
+    )
+
+    await extractToolText(
+      tool.execute("tool-call", {
+        timeBasis: "store",
+        windows: ["TODAY", "LAST_7_DAYS"],
+      }),
+    )
+
+    assert.equal(harness.overviewCalls.length, 0)
+    assert.deepEqual(harness.summaryCalls, [
+      {
+        timeBasis: "store",
+        windows: ["today", "last_7_days"],
+        callerTimeZone: undefined,
+        includeInventory: undefined,
+      },
+    ])
+  })
+
+  it("passes caller time basis through for relative range presets", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_store_overview")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        timeBasis: "caller",
+        rangePreset: "today",
+        callerTimeZone: "Asia/Shanghai",
+      }),
+    )
+
+    assert.deepEqual(harness.overviewCalls, [
+      {
+        timeBasis: "caller",
+        rangePreset: "today",
+        callerTimeZone: "Asia/Shanghai",
+        startDate: undefined,
+        endDate: undefined,
+        includeInventory: undefined,
+      },
+    ])
+    assert.match(text, /^Window timezone: Asia\/Shanghai$/m)
+    assert.match(text, /^Store timezone: America\/New_York$/m)
+  })
+
   it("uses single-window overview mode for custom start and end dates", async () => {
     const harness = createToolHarness()
     const tool = harness.getTool("seller_store_overview")
 
     const text = await extractToolText(
       tool.execute("tool-call", {
+        timeBasis: "store",
         startDate: "2026-03-01",
         endDate: "2026-03-07",
       }),
@@ -302,7 +417,9 @@ describe("registerSellerTools", () => {
 
     assert.deepEqual(harness.overviewCalls, [
       {
+        timeBasis: "store",
         rangePreset: undefined,
+        callerTimeZone: undefined,
         startDate: "2026-03-01",
         endDate: "2026-03-07",
         includeInventory: undefined,
@@ -318,6 +435,7 @@ describe("registerSellerTools", () => {
 
     const text = await extractToolText(
       tool.execute("tool-call", {
+        timeBasis: "store",
         windows: ["today", "last_7_days"],
       }),
     )
@@ -325,7 +443,9 @@ describe("registerSellerTools", () => {
     assert.equal(harness.overviewCalls.length, 0)
     assert.deepEqual(harness.summaryCalls, [
       {
+        timeBasis: "store",
         windows: ["today", "last_7_days"],
+        callerTimeZone: undefined,
         includeInventory: undefined,
       },
     ])
@@ -338,12 +458,36 @@ describe("registerSellerTools", () => {
     assert.match(text, /^Inventory: 250 units$/m)
   })
 
+  it("passes caller time basis through for summary windows", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_store_overview")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        timeBasis: "caller",
+        windows: ["today", "last_7_days"],
+        callerTimeZone: "Asia/Shanghai",
+      }),
+    )
+
+    assert.deepEqual(harness.summaryCalls, [
+      {
+        timeBasis: "caller",
+        windows: ["today", "last_7_days"],
+        callerTimeZone: "Asia/Shanghai",
+        includeInventory: undefined,
+      },
+    ])
+    assert.match(text, /^Window timezone: Asia\/Shanghai$/m)
+  })
+
   it("uses the default full summary window set when windows is empty", async () => {
     const harness = createToolHarness()
     const tool = harness.getTool("seller_store_overview")
 
     const text = await extractToolText(
       tool.execute("tool-call", {
+        timeBasis: "store",
         windows: [],
       }),
     )
@@ -351,6 +495,7 @@ describe("registerSellerTools", () => {
     assert.equal(harness.overviewCalls.length, 0)
     assert.deepEqual(harness.summaryCalls, [
       {
+        timeBasis: "store",
         windows: [
           "today",
           "yesterday",
@@ -361,6 +506,7 @@ describe("registerSellerTools", () => {
           "last_180_days",
           "last_365_days",
         ],
+        callerTimeZone: undefined,
         includeInventory: undefined,
       },
     ])
@@ -379,6 +525,7 @@ describe("registerSellerTools", () => {
 
     const text = await extractToolText(
       tool.execute("tool-call", {
+        timeBasis: "store",
         windows: ["today"],
         rangePreset: "last_7_days",
       }),
@@ -389,12 +536,80 @@ describe("registerSellerTools", () => {
     assert.equal(harness.summaryCalls.length, 0)
   })
 
+  it("rejects missing timeBasis", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_store_overview")
+
+    const text = await extractToolText(tool.execute("tool-call", {}))
+
+    assert.equal(text, 'Pass "timeBasis" as either "caller" or "store" for seller_store_overview.')
+    assert.equal(harness.overviewCalls.length, 0)
+    assert.equal(harness.summaryCalls.length, 0)
+  })
+
+  it('requires callerTimeZone when timeBasis is "caller"', async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_store_overview")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        rangePreset: "today",
+        timeBasis: "caller",
+      }),
+    )
+
+    assert.equal(
+      text,
+      'Pass "callerTimeZone" with a valid IANA timezone such as "Asia/Shanghai" when "timeBasis" is "caller".',
+    )
+    assert.equal(harness.overviewCalls.length, 0)
+    assert.equal(harness.summaryCalls.length, 0)
+  })
+
+  it("rejects invalid callerTimeZone values", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_store_overview")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        rangePreset: "today",
+        timeBasis: "caller",
+        callerTimeZone: "Mars/Base",
+      }),
+    )
+
+    assert.equal(
+      text,
+      'Use a valid IANA timezone such as "Asia/Shanghai" or "America/New_York" for "callerTimeZone".',
+    )
+    assert.equal(harness.overviewCalls.length, 0)
+    assert.equal(harness.summaryCalls.length, 0)
+  })
+
+  it('rejects callerTimeZone when timeBasis is "store"', async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_store_overview")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        rangePreset: "today",
+        timeBasis: "store",
+        callerTimeZone: "Asia/Shanghai",
+      }),
+    )
+
+    assert.equal(text, 'Do not pass "callerTimeZone" when "timeBasis" is "store".')
+    assert.equal(harness.overviewCalls.length, 0)
+    assert.equal(harness.summaryCalls.length, 0)
+  })
+
   it("rejects windows with custom dates", async () => {
     const harness = createToolHarness()
     const tool = harness.getTool("seller_store_overview")
 
     const text = await extractToolText(
       tool.execute("tool-call", {
+        timeBasis: "store",
         windows: ["today"],
         startDate: "2026-03-01",
         endDate: "2026-03-07",
@@ -415,6 +630,7 @@ describe("registerSellerTools", () => {
 
     const text = await extractToolText(
       tool.execute("tool-call", {
+        timeBasis: "store",
         startDate: "2026-03-01",
       }),
     )

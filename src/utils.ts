@@ -34,6 +34,18 @@ export const formatDateTime = (
     timeZoneName: "short",
   }).format(new Date(value))
 
+/** Returns true when the input is a valid IANA timezone name accepted by Intl. */
+export const isValidTimeZone = (value: string) => {
+  try {
+    new Intl.DateTimeFormat(DEFAULT_PLUGIN_CONFIG.locale, {
+      timeZone: value,
+    }).format(new Date())
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Returns a finite number or falls back to the provided default. */
 export const toNumber = (value: unknown, fallback = 0) =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback

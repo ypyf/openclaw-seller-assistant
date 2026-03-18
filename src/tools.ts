@@ -25,6 +25,7 @@ import {
   type ShopifySalesSnapshot,
   type ShopifyStoreSalesSummarySnapshot,
   type ShopifyStoreOverviewSnapshot,
+  type StoreOverviewTimeBasis,
   type StoreOverviewRangePreset,
   loadShopifySalesSnapshot,
 } from "./services/shopify.ts"
@@ -32,6 +33,7 @@ import {
   currency,
   formatDateTime,
   grossMarginPct,
+  isValidTimeZone,
   minimumPriceForGrossMargin,
   needsInputResult,
   optionalNumber,
@@ -40,17 +42,6 @@ import {
   textResultWithDetails,
   toNumber,
 } from "./utils.ts"
-
-const StoreOverviewRangePresetSchema = Type.Union([
-  Type.Literal("today"),
-  Type.Literal("yesterday"),
-  Type.Literal("last_7_days"),
-  Type.Literal("last_30_days"),
-  Type.Literal("last_60_days"),
-  Type.Literal("last_90_days"),
-  Type.Literal("last_180_days"),
-  Type.Literal("last_365_days"),
-])
 
 const STORE_SALES_SUMMARY_WINDOW_ORDER: StoreOverviewRangePreset[] = [
   "today",
@@ -74,6 +65,25 @@ const STORE_SALES_SUMMARY_WINDOW_LABELS: Record<StoreOverviewRangePreset, string
   last_365_days: "Last 1 year",
 }
 
+const escapeRegExp = (value: string) => value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")
+
+const toCaseInsensitivePattern = (value: string) =>
+  Array.from(escapeRegExp(value))
+    .map(character => {
+      const lowerCharacter = character.toLowerCase()
+      const upperCharacter = character.toUpperCase()
+      return lowerCharacter === upperCharacter ? character : `[${lowerCharacter}${upperCharacter}]`
+    })
+    .join("")
+
+const STORE_OVERVIEW_RANGE_PRESET_INPUT_PATTERN = `^(?:${STORE_SALES_SUMMARY_WINDOW_ORDER.map(toCaseInsensitivePattern).join("|")})$`
+
+const StoreOverviewRangePresetInputSchema = Type.String({
+  pattern: STORE_OVERVIEW_RANGE_PRESET_INPUT_PATTERN,
+})
+
+const StoreOverviewTimeBasisSchema = Type.Union([Type.Literal("caller"), Type.Literal("store")])
+
 const SellerStoreOverviewParamsSchema = Type.Object(
   {
     storeId: Type.Optional(
@@ -82,23 +92,30 @@ const SellerStoreOverviewParamsSchema = Type.Object(
           "Optional configured store id. If omitted, use defaultStoreId or the first configured store.",
       }),
     ),
-    rangePreset: Type.Optional(StoreOverviewRangePresetSchema),
+    timeBasis: StoreOverviewTimeBasisSchema,
+    callerTimeZone: Type.Optional(
+      Type.String({
+        description:
+          'Required when "timeBasis" is "caller". Pass the caller IANA timezone such as "Asia/Shanghai" or "America/New_York". Do not pass this when "timeBasis" is "store".',
+      }),
+    ),
+    rangePreset: Type.Optional(StoreOverviewRangePresetInputSchema),
     startDate: Type.Optional(
       Type.String({
         description:
-          'Optional custom start date in "YYYY-MM-DD". Use together with endDate instead of rangePreset.',
+          'Optional custom start date in "YYYY-MM-DD". Use explicit dates only when the user gave calendar dates. seller_store_overview interprets them using "timeBasis": caller dates use "callerTimeZone", store dates use the store timezone.',
       }),
     ),
     endDate: Type.Optional(
       Type.String({
         description:
-          'Optional custom end date in "YYYY-MM-DD". Use together with startDate instead of rangePreset.',
+          'Optional custom end date in "YYYY-MM-DD". Use explicit dates only when the user gave calendar dates. seller_store_overview interprets them using "timeBasis": caller dates use "callerTimeZone", store dates use the store timezone.',
       }),
     ),
     windows: Type.Optional(
-      Type.Array(StoreOverviewRangePresetSchema, {
+      Type.Array(StoreOverviewRangePresetInputSchema, {
         description:
-          "Optional standard summary windows to include. Use this for multi-window store sales summaries. If omitted, seller_store_overview stays in single-window overview mode. Pass an empty array to request the default full summary window set.",
+          'Optional standard summary windows to include. Use this for multi-window store sales summaries across relative windows such as today, yesterday, and last_7_days. seller_store_overview interprets them using "timeBasis". Pass an empty array to request the default full summary window set.',
       }),
     ),
     includeInventory: Type.Optional(
@@ -255,6 +272,55 @@ const resolveStoreSalesSummaryWindows = (windows?: StoreOverviewRangePreset[]) =
   const requestedWindows = new Set(windows ?? STORE_SALES_SUMMARY_WINDOW_ORDER)
   return STORE_SALES_SUMMARY_WINDOW_ORDER.filter(window => requestedWindows.has(window))
 }
+
+const normalizeStoreOverviewRangePreset = (value: string | undefined) => {
+  if (!value) {
+    return undefined
+  }
+
+  switch (value.toLowerCase()) {
+    case "today":
+      return "today"
+    case "yesterday":
+      return "yesterday"
+    case "last_7_days":
+      return "last_7_days"
+    case "last_30_days":
+      return "last_30_days"
+    case "last_60_days":
+      return "last_60_days"
+    case "last_90_days":
+      return "last_90_days"
+    case "last_180_days":
+      return "last_180_days"
+    case "last_365_days":
+      return "last_365_days"
+    default:
+      return undefined
+  }
+}
+
+const normalizeStoreOverviewRangePresets = (values: string[] | undefined) => {
+  if (!values) {
+    return undefined
+  }
+
+  return values.reduce<StoreOverviewRangePreset[]>((result, value) => {
+    const normalizedValue = normalizeStoreOverviewRangePreset(value)
+    if (normalizedValue) {
+      result.push(normalizedValue)
+    }
+    return result
+  }, [])
+}
+
+const normalizeToolTimeZone = (value: string | undefined) => {
+  const trimmedValue = value?.trim()
+  return trimmedValue && trimmedValue.length > 0 ? trimmedValue : undefined
+}
+
+const isStoreOverviewTimeBasis = (value: unknown): value is StoreOverviewTimeBasis =>
+  value === "caller" || value === "store"
 
 type SellerToolRegistration<TParams> = {
   name: string
@@ -722,7 +788,8 @@ const formatStoreOverview = (input: ShopifyStoreOverviewSnapshot, options: { loc
     `Store: ${input.storeName}`,
     `Window: ${input.windowLabel}`,
     `Revenue: ${currency(input.revenue, input.currencyCode, options.locale)}`,
-    input.timezone ? `Timezone: ${input.timezone}` : "Timezone: n/a",
+    input.timezone ? `Store timezone: ${input.timezone}` : "Store timezone: n/a",
+    input.windowTimeZone !== input.timezone ? `Window timezone: ${input.windowTimeZone}` : null,
     `Orders: ${input.ordersCount}`,
     `Units sold: ${Math.round(input.unitsSold)}`,
     typeof input.averageDailyUnits === "number"
@@ -742,6 +809,7 @@ const formatStoreOverview = (input: ShopifyStoreOverviewSnapshot, options: { loc
 const formatStoreSalesSummary = (input: {
   storeName: string
   timezone?: string
+  windowTimeZone?: string
   locale: string
   currencyCode: string
   lines: ShopifyStoreSalesSummarySnapshot["windows"]
@@ -766,6 +834,9 @@ const formatStoreSalesSummary = (input: {
 
   return [
     `Store ${input.storeName} (store timezone: ${input.timezone ?? "n/a"}) sales summary:`,
+    input.windowTimeZone && input.windowTimeZone !== input.timezone
+      ? `Window timezone: ${input.windowTimeZone}`
+      : null,
     "",
     ...summaryLines,
     inventoryLines.length > 0 ? "" : null,
@@ -842,7 +913,7 @@ export const registerSellerTools = (
     name: "seller_store_overview",
     label: "Seller Store Overview",
     description:
-      "Load store-level sales and inventory facts for a configured store. Use single-window mode for one store window with rangePreset or custom dates, or multi-window summary mode with windows for standard comparative windows. If storeId is omitted, use the configured default store.",
+      'Load store-level sales and inventory facts for a configured store. Always set "timeBasis": use "caller" for the user local calendar and pass "callerTimeZone", or use "store" when the user explicitly wants the store-local calendar. Use rangePreset for relative periods and startDate/endDate only for explicit dates. If storeId is omitted, use the configured default store.',
     parameters: SellerStoreOverviewParamsSchema,
     async execute(_id: string, params: SellerStoreOverviewParams) {
       const configuredStore = findConfiguredStore(pluginConfig, params.storeId)
@@ -852,10 +923,35 @@ export const registerSellerTools = (
         )
       }
 
-      const hasWindows = Array.isArray(params.windows)
+      const rangePreset = normalizeStoreOverviewRangePreset(params.rangePreset)
+      const windows = normalizeStoreOverviewRangePresets(params.windows)
+      const callerTimeZone = normalizeToolTimeZone(params.callerTimeZone)
+      const hasWindows = windows !== undefined
       const hasCustomRange = Boolean(params.startDate || params.endDate)
 
-      if (hasWindows && params.rangePreset) {
+      if (!isStoreOverviewTimeBasis(params.timeBasis)) {
+        return textResult(
+          'Pass "timeBasis" as either "caller" or "store" for seller_store_overview.',
+        )
+      }
+
+      if (params.timeBasis === "caller" && !callerTimeZone) {
+        return textResult(
+          'Pass "callerTimeZone" with a valid IANA timezone such as "Asia/Shanghai" when "timeBasis" is "caller".',
+        )
+      }
+
+      if (params.timeBasis === "caller" && callerTimeZone && !isValidTimeZone(callerTimeZone)) {
+        return textResult(
+          'Use a valid IANA timezone such as "Asia/Shanghai" or "America/New_York" for "callerTimeZone".',
+        )
+      }
+
+      if (params.timeBasis === "store" && callerTimeZone) {
+        return textResult('Do not pass "callerTimeZone" when "timeBasis" is "store".')
+      }
+
+      if (hasWindows && rangePreset) {
         return textResult(
           'Use either "windows" or "rangePreset" for seller_store_overview, not both.',
         )
@@ -873,7 +969,7 @@ export const registerSellerTools = (
         )
       }
 
-      if (hasCustomRange && params.rangePreset) {
+      if (hasCustomRange && rangePreset) {
         return textResult(
           'Use either "rangePreset" or "startDate"/"endDate" for seller_store_overview, not both.',
         )
@@ -881,9 +977,11 @@ export const registerSellerTools = (
 
       if (configuredStore.platform === "shopify") {
         if (hasWindows) {
-          const requestedWindows = resolveStoreSalesSummaryWindows(params.windows)
+          const requestedWindows = resolveStoreSalesSummaryWindows(windows)
           const summary = await dependencies.loadShopifyStoreSalesSummary(configuredStore.store, {
+            timeBasis: params.timeBasis,
             windows: requestedWindows,
+            callerTimeZone,
             includeInventory: params.includeInventory,
           })
 
@@ -891,6 +989,7 @@ export const registerSellerTools = (
             formatStoreSalesSummary({
               storeName: summary.storeName,
               timezone: summary.timezone,
+              windowTimeZone: summary.windowTimeZone,
               locale: pluginConfig.locale,
               currencyCode: summary.currencyCode,
               lines: summary.windows,
@@ -904,7 +1003,9 @@ export const registerSellerTools = (
         let snapshot: ShopifyStoreOverviewSnapshot
         try {
           snapshot = await dependencies.loadShopifyStoreOverview(configuredStore.store, {
-            rangePreset: params.rangePreset,
+            timeBasis: params.timeBasis,
+            rangePreset,
+            callerTimeZone,
             startDate: params.startDate,
             endDate: params.endDate,
             includeInventory: params.includeInventory,

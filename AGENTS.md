@@ -27,3 +27,4 @@ TypeScript project using Node.js.
 ## Rules for Agents
 
 - Do not change dependencies unless necessary
+- Do not preserve backward compatibility or worry about breaking existing callers. Prefer thorough refactors and complete fixes over incremental compatibility layers.

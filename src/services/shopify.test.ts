@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 import {
   evaluateClearanceDecision,
   evaluateDiscountDecision,
+  resolveStoreOverviewWindow,
   type ShopifyProductActionSnapshot,
 } from "./shopify.ts"
 
@@ -26,6 +27,30 @@ const createSnapshot = (
   averageUnitCost: 12.5,
   currentMarginPct: 67.94871794871796,
   ...overrides,
+})
+
+describe("resolveStoreOverviewWindow", () => {
+  it("anchors relative today to the store timezone instead of the caller timezone", () => {
+    const now = new Date("2026-03-18T00:30:00+08:00")
+
+    const window = resolveStoreOverviewWindow("today", "America/New_York", now)
+
+    assert.equal(window.windowLabel, "today")
+    assert.equal(window.start, "2026-03-17T04:00:00.000Z")
+    assert.equal(window.end, "2026-03-18T04:00:00.000Z")
+    assert.equal(window.dayCount, 1)
+  })
+
+  it("can anchor relative today to the caller timezone when requested", () => {
+    const now = new Date("2026-03-18T00:30:00+08:00")
+
+    const window = resolveStoreOverviewWindow("today", "Asia/Shanghai", now)
+
+    assert.equal(window.windowLabel, "today")
+    assert.equal(window.start, "2026-03-17T16:00:00.000Z")
+    assert.equal(window.end, "2026-03-18T16:00:00.000Z")
+    assert.equal(window.dayCount, 1)
+  })
 })
 
 describe("evaluateClearanceDecision", () => {

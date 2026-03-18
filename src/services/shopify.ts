@@ -41,6 +41,7 @@ import {
   currency,
   type FlowResolution,
   grossMarginPct,
+  isValidTimeZone,
   minimumPriceForGrossMargin,
   needsInput,
   normalizeSku,
@@ -63,6 +64,7 @@ export type ShopifyStoreOverviewSnapshot = {
   retrievedAtIso: string
   storeName: string
   timezone: string
+  windowTimeZone: string
   currencyCode: string
   windowLabel: string
   ordersCount: number
@@ -86,6 +88,7 @@ export type ShopifyStoreSalesSummarySnapshot = {
   retrievedAtIso: string
   storeName: string
   timezone: string
+  windowTimeZone: string
   currencyCode: string
   windows: ShopifyStoreSalesSummaryWindow[]
   inventoryUnits?: number
@@ -243,6 +246,8 @@ export type StoreOverviewRangePreset =
   | "last_90_days"
   | "last_180_days"
   | "last_365_days"
+
+export type StoreOverviewTimeBasis = "caller" | "store"
 
 type StoreOverviewWindow = {
   windowLabel: string
@@ -565,6 +570,27 @@ const resolveCustomStoreOverviewWindow = (startDate: string, endDate: string, ti
     end: endUtc.toISOString(),
     dayCount,
   }
+}
+
+const resolveWindowTimeZone = (
+  storeTimeZone: string,
+  options: {
+    timeBasis: StoreOverviewTimeBasis
+    callerTimeZone?: string
+  },
+) => {
+  if (options.timeBasis === "store") {
+    return storeTimeZone
+  }
+
+  const callerTimeZone = options.callerTimeZone?.trim()
+  if (!callerTimeZone) {
+    throw new Error('callerTimeZone is required when timeBasis is "caller".')
+  }
+  if (!isValidTimeZone(callerTimeZone)) {
+    throw new Error(`Invalid callerTimeZone "${callerTimeZone}".`)
+  }
+  return callerTimeZone
 }
 
 const fetchAllShopifyOrders = async (client: ShopifyGraphQLClient, ordersQuery: string) => {
@@ -1154,9 +1180,11 @@ const tryLoadShopifyVariantCosts = async (
 export const loadShopifyStoreOverview = async (
   store: ShopifyStoreConfig,
   options: {
+    timeBasis: StoreOverviewTimeBasis
     rangePreset?: StoreOverviewRangePreset
     startDate?: string
     endDate?: string
+    callerTimeZone?: string
     includeInventory?: boolean
   },
 ): Promise<ShopifyStoreOverviewSnapshot> => {
@@ -1176,10 +1204,11 @@ export const loadShopifyStoreOverview = async (
 
   const shop = shopResult.data?.shop
   const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const windowTimeZone = resolveWindowTimeZone(timeZone, options)
   const window =
     options.startDate && options.endDate
-      ? resolveCustomStoreOverviewWindow(options.startDate, options.endDate, timeZone)
-      : resolveStoreOverviewWindow(options.rangePreset ?? "today", timeZone)
+      ? resolveCustomStoreOverviewWindow(options.startDate, options.endDate, windowTimeZone)
+      : resolveStoreOverviewWindow(options.rangePreset ?? "today", windowTimeZone)
   const ordersQuery = `created_at:>=${window.start} created_at:<${window.end} financial_status:paid`
   const orders = await fetchAllShopifyOrders(client, ordersQuery)
   const revenue = sum(
@@ -1204,6 +1233,7 @@ export const loadShopifyStoreOverview = async (
     retrievedAtIso,
     storeName: shop?.name ?? store.name,
     timezone: timeZone,
+    windowTimeZone,
     currencyCode:
       shop?.currencyCode ??
       orders[0]?.currentTotalPriceSet?.shopMoney?.currencyCode ??
@@ -1222,17 +1252,20 @@ export const loadShopifyStoreOverview = async (
 export const loadShopifyStoreSalesSummary = async (
   store: ShopifyStoreConfig,
   options: {
+    timeBasis: StoreOverviewTimeBasis
     windows: StoreOverviewRangePreset[]
+    callerTimeZone?: string
     includeInventory?: boolean
   },
 ): Promise<ShopifyStoreSalesSummarySnapshot> => {
   const client = await createShopifyClient(store)
   const shop = await fetchShopifyShopMetadata(client)
   const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const windowTimeZone = resolveWindowTimeZone(timeZone, options)
   const now = new Date()
   const windows = options.windows.map(rangePreset => ({
     rangePreset,
-    ...resolveStoreOverviewWindow(rangePreset, timeZone, now),
+    ...resolveStoreOverviewWindow(rangePreset, windowTimeZone, now),
   }))
   const widestWindow = windows.reduce((widest, candidate) =>
     candidate.dayCount > widest.dayCount ? candidate : widest,
@@ -1291,6 +1324,7 @@ export const loadShopifyStoreSalesSummary = async (
     retrievedAtIso: new Date().toISOString(),
     storeName: shop?.name ?? store.name,
     timezone: timeZone,
+    windowTimeZone,
     currencyCode,
     windows: summaryWindows,
     inventoryUnits,

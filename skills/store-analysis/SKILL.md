@@ -5,7 +5,7 @@ description: "Analyze store-level sales performance with seller_store_overview w
 
 # Store Analysis
 
-Use this skill when the user wants an assessment, explanation, diagnosis, risk review, or next-step advice about store-level sales performance.
+Use this skill when the user wants analysis or next-step advice about store-level sales performance.
 
 Route by intent:
 
@@ -15,6 +15,8 @@ Route by intent:
 
 Rules:
 
+- Always set `timeBasis`. Default to `timeBasis: "caller"` with `callerTimeZone`; switch to `timeBasis: "store"` only when the user explicitly wants the store-local calendar.
+- Relative windows use `rangePreset` or `windows`. Explicit calendar dates use `startDate` and `endDate`.
 - Do not call `seller_sales_query` for store-total questions. That tool is product-level only.
 - Do not treat overlapping rolling windows as a clean baseline for change analysis. For example, do not judge `today` against `last_7_days` as if the 7-day window excludes today.
 - If the user names a calendar comparison period but does not provide dates and the period is not directly representable by supported presets, ask for exact dates instead of silently remapping it.

@@ -213,6 +213,7 @@ Current limitations of the Shopify store overview:
 - traffic, conversion, and ad spend are not currently sourced from Shopify
 - inventory cover is only available when inventory totals are included and the selected window spans multiple days
 - standard store overview presets include `today`, `yesterday`, `last_7_days`, `last_30_days`, `last_60_days`, `last_90_days`, `last_180_days`, and `last_365_days`
+- `seller_store_overview` uses `timeBasis` to decide whether a calendar window should be interpreted in the caller timezone or the store timezone
 
 ## Usage
 
@@ -237,6 +238,7 @@ More examples are available in [Usage Examples](./docs/usage-examples.md).
 - Ambiguous title-keyword searches return candidate choices instead of auto-selecting a product.
 - SKU matching is exact. SKU prefixes or partial SKU fragments are not supported.
 - `seller_store_overview` is the only store-level sales tool. Use single-window mode for one store window and analysis input, or pass `windows` for fixed plain-text multi-window summaries.
+- For `seller_store_overview`, always set `timeBasis`. Use `timeBasis: "caller"` with `callerTimeZone` for user-local windows, and `timeBasis: "store"` only when the user explicitly wants the store-local calendar.
 - Store-level sales routing is skill-led: `store-sales-summary` handles factual store sales requests and `store-analysis` handles diagnosis or next-step advice, both using `seller_store_overview`.
 - `seller_sales_query` is a product-level recent-sales capability only. Use it when the user asks how much a specific product sold recently, not for store totals.
 - Product decisions are skill-led: the `product-decision` skill should call `seller_replenishment_decision`, `seller_discount_decision`, and/or `seller_clearance_decision` depending on the user's ask, and aggregate outputs for multi-part questions.

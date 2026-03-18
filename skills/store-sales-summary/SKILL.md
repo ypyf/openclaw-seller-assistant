@@ -15,8 +15,9 @@ Route by intent:
 
 Rules:
 
+- Always set `timeBasis`. Default to `timeBasis: "caller"` with `callerTimeZone`; switch to `timeBasis: "store"` only when the user explicitly wants the store-local calendar.
+- Relative windows use `rangePreset` or `windows`. Explicit calendar dates use `startDate` and `endDate`.
 - Do not call `seller_sales_query` for store-total questions. That tool is product-level only.
 - Do not silently remap calendar periods that are not represented by supported presets. If the user wants a comparison like month-over-month and does not provide exact dates, ask for the date ranges.
 - Do not present overlapping rolling windows as a non-overlapping baseline comparison. If the user asks for both values, report the numbers factually and note the overlap when it matters.
-- Do not add diagnosis, causal claims, or next-step advice. Those belong to `store-analysis`.
 - Keep multi-window summary output in plain text. Do not reformat it as a table, relabel it, or translate its window labels.
