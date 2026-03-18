@@ -2,7 +2,7 @@
   "id": "seller-assistant",
   "name": "Seller Assistant",
   "description": "Seller assistant domain tools for Shopify analytics, inventory, orders, and catalog workflows.",
-  "version": "2026.3.18",
+  "version": "2026.3.19",
   "skills": ["./skills"],
   "configSchema": {
     "type": "object",
