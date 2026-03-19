@@ -1,95 +1,95 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
 
-type DefaultPluginConfig = {
+export type ProviderProfile = {
+  id: string
+  name: string
+  provider: string
+  connection: Record<string, unknown>
+}
+
+type RawPluginConfig = Record<string, unknown>
+
+type RawProviderProfile = {
+  id?: unknown
+  name?: unknown
+  provider?: unknown
+  connection?: unknown
+}
+
+export type PluginConfig = {
   currency: string
   locale: string
   timeZone: string
-  salesLookbackDays: number
+  defaultProfile?: string
+  profiles: ProviderProfile[]
 }
 
 /** Built-in fallback values used when the plugin config omits a supported setting. */
-export const DEFAULT_PLUGIN_CONFIG: DefaultPluginConfig = {
+export const DEFAULT_PLUGIN_CONFIG = {
   currency: "USD",
   locale: "en-US",
   timeZone: "UTC",
-  salesLookbackDays: 30,
-}
+} as const
 
-export type ShopifyStoreOperationsConfig = {
-  salesLookbackDays?: number
-}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
 
-/** Shopify store connection settings plus optional store-level operational overrides. */
-export type ShopifyStoreConfig = {
-  id: string
-  name: string
-  storeDomain: string
-  clientId: string
-  clientSecretEnv: string
-  operations?: ShopifyStoreOperationsConfig
-}
+const readString = (value: unknown) =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
 
-type RawPluginConfig = {
-  currency?: string
-  locale?: string
-  defaultStoreId?: string
-  stores?: {
-    shopify?: ShopifyStoreConfig[]
+const toProviderProfile = (value: unknown): ProviderProfile | undefined => {
+  const input: RawProviderProfile = isRecord(value) ? value : {}
+  const id = readString(input.id)
+  const name = readString(input.name)
+  const provider = readString(input.provider)
+  const connection = isRecord(input.connection) ? input.connection : undefined
+
+  if (!id || !name || !provider || !connection) {
+    return undefined
   }
-} & Record<string, unknown>
 
-/** Normalized runtime config used by the plugin after applying built-in defaults. */
-export type PluginConfig = {
-  /** Display currency fallback for outputs that do not have an explicit business currency. */
-  currency: string
-  /** Display locale used when formatting dates, numbers, and currency output. */
-  locale: string
-  defaultStoreId?: string
-  stores?: {
-    shopify?: ShopifyStoreConfig[]
+  return {
+    id,
+    name,
+    provider,
+    connection,
   }
-} & Record<string, unknown>
+}
+
+const toProfiles = (value: unknown) =>
+  Array.isArray(value)
+    ? value.map(toProviderProfile).filter((profile): profile is ProviderProfile => Boolean(profile))
+    : []
 
 /** Normalizes raw plugin config into the runtime shape used by the plugin. */
 export const toPluginConfig = (api: Pick<OpenClawPluginApi, "pluginConfig">): PluginConfig => {
-  const rawConfig = (api?.pluginConfig ?? {}) as RawPluginConfig
+  const rawConfig: RawPluginConfig = isRecord(api?.pluginConfig) ? api.pluginConfig : {}
 
   return {
-    ...rawConfig,
-    currency: rawConfig.currency ?? DEFAULT_PLUGIN_CONFIG.currency,
-    locale: rawConfig.locale ?? DEFAULT_PLUGIN_CONFIG.locale,
+    currency: readString(rawConfig.currency) ?? DEFAULT_PLUGIN_CONFIG.currency,
+    locale: readString(rawConfig.locale) ?? DEFAULT_PLUGIN_CONFIG.locale,
+    timeZone: readString(rawConfig.timeZone) ?? DEFAULT_PLUGIN_CONFIG.timeZone,
+    defaultProfile: readString(rawConfig.defaultProfile),
+    profiles: toProfiles(rawConfig.profiles),
   }
 }
 
-const toArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : [])
-
-/** Resolves the active Shopify store from an explicit id, the configured default, or the first store. */
-export const findConfiguredStore = (
+/** Resolves the active configured profile from an explicit id, the configured default, or the first profile. */
+export const findConfiguredProfile = (
   config: PluginConfig,
-  storeId?: string,
-): ShopifyStoreConfig | null => {
-  const configuredStores = toArray<ShopifyStoreConfig>(config?.stores?.shopify).filter(Boolean)
-
-  if (storeId) {
-    return configuredStores.find(store => store.id === storeId) ?? null
+  profileId?: string,
+): ProviderProfile | undefined => {
+  if (profileId) {
+    return config.profiles.find(profile => profile.id === profileId)
   }
 
-  if (config?.defaultStoreId) {
-    return configuredStores.find(store => store.id === config.defaultStoreId) ?? null
+  if (config.defaultProfile) {
+    return config.profiles.find(profile => profile.id === config.defaultProfile)
   }
 
-  return configuredStores[0] ?? null
+  return config.profiles[0]
 }
 
-/** Reads a numeric store-level operation setting when present and returns undefined otherwise. */
-export const getStoreOperationNumber = (
-  configuredStore: ShopifyStoreConfig | null,
-  key: "salesLookbackDays",
-) => {
-  const storeValue = configuredStore?.operations?.[key]
-  if (typeof storeValue === "number" && Number.isFinite(storeValue)) {
-    return storeValue
-  }
-
-  return undefined
-}
+/** Returns configured profiles for one provider name. */
+export const findProfilesByProvider = (config: PluginConfig, provider: string) =>
+  config.profiles.filter(profile => profile.provider === provider)

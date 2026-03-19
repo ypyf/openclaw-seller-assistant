@@ -1,24 +1,22 @@
 # Seller Assistant
 
-`seller-assistant` is an OpenClaw plugin for Shopify merchant operations workflows.
+`seller-assistant` is an OpenClaw plugin that provides a small runtime for seller-platform API work:
 
-> [!WARNING]
-> This project is evolving quickly. Many features are still incomplete, and tool behavior, configuration, and public interfaces may change without preserving backward compatibility between releases.
+- `seller_profiles`: inspect configured provider profiles and their safe connection summary
+- `seller_search`: search provider notes plus official platform documentation
+- `seller_execute`: run read-only JavaScript against a configured profile through provider helpers
 
-It packages four grouped seller tools:
+The plugin does not call a model directly. Skills and the host agent search docs, generate scripts, execute them, then summarize the result.
 
-- `seller_analytics`: store-level sales facts for one window or fixed multi-window summaries
-- `seller_inventory`: product-level inventory lookup plus location browse/list queries and per-location inventory level breakdowns
-- `seller_orders`: product-level recent sales facts plus draft-order query/create/update/invoice_send/complete, fulfillment-order query/hold/release_hold/move, order query/get/update/cancel/capture, order-edit session begin/set_quantity/commit, fulfillment creation, return query/create, and refund creation
-- `seller_catalog`: paginated product, variant, and collection browse/list queries plus product fact bundles with inventory, recent sales, price, cost, and margin facts when available
+## Current Scope
 
-The public tool surface focuses on high-value seller-ops primitives through a small set of grouped tools, while skills handle pagination, query composition, comparisons, summarization, and other orchestration.
+The plugin currently includes one built-in provider:
 
-For the broader seller-ops primitive coverage plan and the mechanism-only tool direction, see [Shopify Admin Sales/Ops Capability Map](./docs/shopify-admin-sales-ops-capability-map.md).
+- `shopify`
+
+The runtime is designed for additional providers later, but only Shopify is implemented today.
 
 ## Install
-
-Install from npm:
 
 ```bash
 openclaw plugins install @planetbee/seller-assistant
@@ -37,41 +35,11 @@ openclaw plugins info seller-assistant
 openclaw plugins doctor
 ```
 
-Plugin skills are loaded with the plugin, so restart the gateway after changes to the plugin or its `skills/` directory.
+## Config
 
-In standard OpenClaw configs, these registered tools work without manual allowlist entries. Add explicit plugin or tool allowlist entries when your OpenClaw config uses restrictive `plugins.allow` or `tools.allow` policies.
-
-For restricted configs, add the plugin id under `plugins.allow` and list the tool names under `tools.allow`:
-
-```json
-{
-  "plugins": {
-    "allow": ["seller-assistant"],
-    "entries": {
-      "seller-assistant": {
-        "enabled": true
-      }
-    }
-  },
-  "tools": {
-    "allow": ["seller_analytics", "seller_inventory", "seller_orders", "seller_catalog"]
-  }
-}
-```
-
-Validate the config:
-
-```bash
-openclaw config validate
-```
-
-## Store config
-
-Store config lives under:
+Plugin config lives under:
 
 `plugins.entries.seller-assistant.config`
-
-Use `stores.shopify` to configure one or more Shopify stores.
 
 Example:
 
@@ -82,22 +50,22 @@ Example:
       "seller-assistant": {
         "enabled": true,
         "config": {
-          "defaultStoreId": "shopify-us",
+          "defaultProfile": "shopify-main",
+          "locale": "en-US",
           "currency": "USD",
-          "stores": {
-            "shopify": [
-              {
-                "id": "shopify-us",
-                "name": "US Shopify Store",
+          "profiles": [
+            {
+              "id": "shopify-main",
+              "name": "Main Shopify Store",
+              "provider": "shopify",
+              "connection": {
                 "storeDomain": "your-store.myshopify.com",
                 "clientId": "your_shopify_client_id",
                 "clientSecretEnv": "SHOPIFY_CLIENT_SECRET",
-                "operations": {
-                  "salesLookbackDays": 21
-                }
+                "apiVersion": "2026-01"
               }
-            ]
-          }
+            }
+          ]
         }
       }
     }
@@ -105,47 +73,25 @@ Example:
 }
 ```
 
-In that structure:
+Most top-level config fields are optional:
 
-- `stores.shopify` is a list of Shopify stores
-- When only one store is configured, you can omit `defaultStoreId`. If set, it should match one store `id` and is used when the user leaves the store unspecified.
-- `currency` is a fallback display currency for outputs that lack an explicit business currency from source data. Shopify store and order currency continue to come from Shopify itself.
-- `locale` controls date, number, and currency formatting for tool output
-- `stores.shopify[].operations.salesLookbackDays` overrides the built-in 30-day lookback for Shopify-backed orders and product fact queries
+- `defaultProfile` is optional. When omitted, the plugin uses the first configured profile.
+- `locale` is optional. Default: `en-US`.
+- `currency` is optional. Default: `USD`.
+- `profiles` is the main required section because it defines the provider connections the plugin can use.
 
-Built-in defaults when a config value is omitted:
+Profile selection works like this:
 
-- `currency`: `USD`
-- `locale`: `en-US`
-- `stores.shopify[].operations.salesLookbackDays`: `30`
+1. Use the explicit `profileId` from the tool call when one is provided.
+2. Otherwise use `defaultProfile` when it is configured.
+3. Otherwise fall back to the first item in `profiles`.
 
-## Shopify Auth Model
+Important Shopify connection fields:
 
-This plugin uses a `bring your own Shopify app` model tied to the same organization that owns the target store:
-
-- the merchant creates or uses a Shopify app owned by that merchant's own organization
-- that app is installed on a store the merchant owns
-- the merchant then configures this plugin with that store's `storeDomain`, `clientId`, and `clientSecretEnv`
-
-The plugin requests Admin API access using the merchant's own app credentials. This is a same-organization app model, where the app and the target store belong to the same owner or organization.
-
-## Shopify Setup
-
-To connect a Shopify store in the current model:
-
-1. Create or use a Shopify app that belongs to the same merchant organization that owns the target store.
-2. Install that app on the merchant's own Shopify store.
-3. Grant the app at least the Admin API scopes listed below.
-4. Copy the app client id.
-5. Put the app client secret into an environment variable on the OpenClaw host.
-6. Reference that environment variable name in `clientSecretEnv`.
-7. Add the store entry under `plugins.entries.seller-assistant.config.stores.shopify`.
-
-For Shopify:
-
-- `clientId` is the merchant's own Shopify app client identifier
-- `clientSecretEnv` is the name of an environment variable on the OpenClaw host that contains that merchant app's client secret
-- `storeDomain` must be the merchant's `*.myshopify.com` domain for the same store where that app is installed
+- `storeDomain`: merchant `*.myshopify.com` store domain
+- `clientId`: merchant-owned Shopify app client id
+- `clientSecretEnv`: environment variable containing that app client secret
+- `apiVersion`: optional Admin API version override
 
 Example environment setup:
 
@@ -153,91 +99,98 @@ Example environment setup:
 export SHOPIFY_CLIENT_SECRET="shpss_..."
 ```
 
-Configure Admin API scopes on the Shopify app itself.
+## Tool Model
 
-To use `seller_analytics` with Shopify, grant the app at least these Admin API scopes:
+### `seller_profiles`
 
-- `read_orders`
-- `read_products`
+Use this tool to list profiles or inspect one profile:
 
-Other Shopify tools follow these same permission rules:
+```json
+{
+  "operation": "list"
+}
+```
 
-- `seller_inventory` only needs `read_products`.
-- `seller_orders` product sales facts need `read_orders` and `read_products`; order query/get need `read_orders`; order update needs `write_orders`; order-edit session begin needs the relevant order-edit scopes such as `write_order_edits`; draft orders need the relevant draft-order scopes; fulfillment-order query and hold/release/move need the relevant fulfillment-order scopes; cancel/capture/fulfillment/return/refund actions also need the relevant write-order, write-returns, and fulfillment scopes.
-- `seller_catalog` needs both `read_orders` and `read_products`.
+```json
+{
+  "operation": "get",
+  "profileId": "shopify-main"
+}
+```
 
-Shopify also classifies `Orders` as protected customer data. If order queries fail even though `read_orders` is configured, check whether the app still needs protected customer data access enabled or approved in Shopify's app configuration flow for its app type. Shopify notes that GraphQL requests to unapproved protected types can return HTTP `200` with an error in the `errors` hash instead of normal order data.
+### `seller_search`
 
-By default, Shopify order APIs expose only the last 60 days of orders. This plugin supports longer windows such as `last_90_days`, `last_180_days`, `last_365_days`, and custom date ranges, so apps that need older orders should also request and add `read_all_orders` together with `read_orders`.
+Use this tool to search provider notes and official docs:
 
-For `seller_catalog`, `read_products` is required to access `InventoryItem.unitCost` for cost-aware product facts when Shopify exposes that cost data.
+```json
+{
+  "profileId": "shopify-main",
+  "query": "orders graphql pagination",
+  "limit": 5
+}
+```
 
-Current limitations of the Shopify analytics coverage:
+Set `refresh: true` to force a doc refetch instead of using the in-memory cache.
 
-- current Shopify-sourced analytics focus on sales facts; traffic, conversion, and ad spend remain outside the present source set
-- inventory cover is only available when inventory totals are included and the selected window spans multiple days
-- standard store overview presets include `today`, `yesterday`, `last_7_days`, `last_30_days`, `last_60_days`, `last_90_days`, `last_180_days`, and `last_365_days`
-- `seller_analytics` uses `timeBasis` to decide whether a calendar window should be interpreted in the caller timezone or the store timezone
+### `seller_execute`
+
+Use this tool to run read-only JavaScript. Scripts should use `provider.graphql(...)` or `provider.request(...)`.
+
+Example:
+
+```json
+{
+  "profileId": "shopify-main",
+  "runtime": "javascript",
+  "mode": "read",
+  "script": "const data = await provider.graphql(`query { shop { name } }`)\nreturn { shopName: data?.shop?.name }"
+}
+```
+
+In this runtime, `provider.graphql(...)` returns the GraphQL `data` object directly after response validation. Access fields like `data?.productVariants`, not `data?.data?.productVariants`.
+
+Execution is intentionally constrained:
+
+- JavaScript only
+- read-only mode only
+- no shell access
+- no filesystem access
+- no direct `fetch`; use provider helpers
+
+## Skills
+
+The plugin ships with:
+
+- a seller API workflow skill that selects a profile, searches docs, plans a read-only script, executes it, and summarizes the result
 
 ## Usage
 
-After the plugin is loaded, ask the agent in natural language:
+Representative prompts:
 
 - "How much did my store sell today?"
-- "Show store overview for my default store over the last 7 days."
-- "Show a store sales summary for my default store."
-- "Check store health for my default store."
-- "Check inventory for short sleeve in my default store."
-- "List locations in my default store."
-- "Show per-location inventory for SKU WM-01 in my default store."
-- "Show the latest paid unfulfilled orders in my default store."
-- "List open draft orders in my default store."
-- "Create a draft order for 2 units of SKU WM-01 in my default store."
-- "Email the invoice for draft order gid://shopify/DraftOrder/1 in my default store."
-- "Complete draft order gid://shopify/DraftOrder/1 in my default store."
-- "List open fulfillment orders in my default store."
-- "Place fulfillment order gid://shopify/FulfillmentOrder/1 on hold for awaiting payment."
-- "Release the hold on fulfillment order gid://shopify/FulfillmentOrder/1."
-- "Move fulfillment order gid://shopify/FulfillmentOrder/1 to location gid://shopify/Location/2."
-- "Get order gid://shopify/Order/1001 in my default store."
-- "Update order gid://shopify/Order/1001 and add note gift wrap plus tag vip."
-- "Begin an order edit for gid://shopify/Order/1001 in my default store."
-- "Reduce calculated line item gid://shopify/CalculatedLineItem/1 to quantity 2 in calculated order gid://shopify/CalculatedOrder/1."
-- "Commit order edit gid://shopify/CalculatedOrder/1 and notify the customer."
-- "Cancel order gid://shopify/Order/1001 without refunding the original payment methods and restock the items."
-- "Capture 25 USD on order gid://shopify/Order/1001 using authorized transaction gid://shopify/OrderTransaction/1."
-- "Create a fulfillment for fulfillment order gid://shopify/FulfillmentOrder/1 with tracking number 1Z999."
-- "Show returnable line items for order gid://shopify/Order/1001."
-- "Create a return for fulfillment line item gid://shopify/FulfillmentLineItem/1 on order gid://shopify/Order/1001."
-- "Refund one unit on order gid://shopify/Order/1001 and note customer appeasement."
-- "List active products in my default store."
-- "List collections matching summer in my default store."
-- "Show variants matching SKU WM-01 in my default store."
-- "List every SKU in my default store."
-- "Should I restock, discount, or clear SKU WM-01 in my default store?"
-- "Should I restock SKU WM-01 in my default store?"
-- "Is this SKU worth replenishing or clearing?"
-- "Should I try discounting Wireless Mouse in store shopify-us?"
+- "Show store overview for my default Shopify profile over the last 7 days."
+- "Check inventory for SKU WM-01 in my default Shopify profile."
+- "Which products are low on stock right now?"
+- "Show the latest paid unfulfilled orders in my default Shopify profile."
+- "List open draft orders for buyer@example.com."
+- "Show returnable line items for order #1001."
+- "List every SKU in my default Shopify profile."
+- "Show active products from vendor Acme."
+- "Check store health for my default Shopify profile."
 
-More examples are available in [Usage Examples](./docs/usage-examples.md).
+The agent can also handle explicit runtime asks when needed:
+
+- "Search Shopify docs for fulfillment order pagination."
+- "Using my default Shopify profile, generate a read-only query for the latest five orders and summarize payment status."
+
+For more examples, see [Usage Examples](./docs/usage-examples.md).
 
 ## Notes
 
-- Product title resolution supports full titles and title keywords.
-- Ambiguous title-keyword searches return candidate choices instead of auto-selecting a product.
-- SKU matching uses exact SKU values.
-- The current public tool surface is domain-grouped: `seller_analytics`, `seller_inventory`, `seller_orders`, and `seller_catalog`.
-- Skills can compose pagination, combined filtering, comparisons, summarization, and other multi-step reads. Tool-native read and write primitives define the exact capability boundary, and missing primitives remain tracked coverage gaps.
-- The grouped interface is still ahead of the domain depth: `seller_inventory` now covers aggregate product inventory, location browse/list queries, and per-location inventory levels but still lacks write-side inventory mutations; `seller_catalog` now covers product facts plus lightweight product, variant, and collection browse/list queries; and `seller_orders` now covers product sales facts, draft orders, fulfillment-order query/hold/release_hold/move, order query/get/update/cancel/capture, order-edit session begin/set_quantity/commit, fulfillment creation, return query/create, and refund creation but still lacks broader order-edit mutations and richer fulfillment/return lifecycle actions.
-- For store-level sales, use `seller_analytics` with `resource: "store_sales"`. Use `operation: "overview"` for one window and `operation: "summary"` for fixed multi-window summaries.
-- For `seller_analytics`, always set `timeBasis`. Use `timeBasis: "caller"` with `callerTimeZone` for user-local windows, and `timeBasis: "store"` only when the user explicitly wants the store-local calendar.
-- Store-level sales routing is skill-led: `store-sales-summary` handles factual store sales requests and `store-analysis` handles diagnosis or next-step advice, both using `seller_analytics`.
-- `seller_orders` serves product-level sales reporting; use `seller_analytics` for store-level numbers.
-- `seller_orders` and `seller_catalog` use explicit `resource`, `operation`, and `input` dispatch for domain actions.
-- For `seller_inventory`, use `resource: "product"` for aggregate inventory, `resource: "location"` for location browse/list queries, and `resource: "inventory_level"` for per-location inventory breakdowns.
-- For `seller_catalog`, use `resource: "product_facts"` to load one product fact bundle, `resource: "product"` to query product summaries, `resource: "variant"` to query variant summaries, and `resource: "collection"` to query collection summaries. Complete SKU lists use variant queries with `query: "sku:*"` and `input.allPages: true`.
-- Product decisions are skill-led: the `product-decision` skill should call `seller_catalog` for facts, then reason about replenishment, markdown, or clearance in the agent/skill layer.
-- Campaign and operational strategy should use grouped fact tools rather than adding new decision-only tools.
+- `seller_profiles` does not return secret values or environment variable names.
+- `seller_search` prefers provider-curated notes before official doc chunks.
+- `seller_execute` returns the script, request summary, logs, structured result, and raw response excerpts for downstream analysis.
+- Shopify order access may still require protected customer data approval in addition to `read_orders`.
 
 ## License
 

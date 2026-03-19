@@ -24,6 +24,11 @@ TypeScript project using Node.js.
 - Update tests when behavior changes
 - Use descriptive test names
 - Prefer asserting the current supported contract. Do not add tests whose main purpose is to assert that removed or nonexistent things do not exist.
+- Keep assertions minimal.
+- Do not lock tests to wording, formatting, or ordering unless they are part of the contract.
+- Prefer public structured data over rendered text.
+- Keep test scaffolding small.
+- Use test framework lifecycle hooks for global cleanup.
 
 ## Rules for Agents
 

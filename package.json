@@ -29,7 +29,6 @@
     "skills/"
   ],
   "dependencies": {
-    "@shopify/admin-api-client": "^1.1.2",
     "@sinclair/typebox": "^0.34.48"
   },
   "openclaw": {
@@ -38,7 +37,7 @@
     ]
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test src/services/shopify.test.ts src/tools.test.ts",
+    "test": "node --experimental-strip-types --test src/config.test.ts src/docs.test.ts src/execute.test.ts src/providers/shopify.test.ts src/tools.test.ts",
     "format": "prettier \"**/*.{js,jsx,ts,tsx,json,html,css,md}\" --write",
     "format:check": "prettier \"**/*.{js,jsx,ts,tsx,json,html,css,md}\" --check"
   },

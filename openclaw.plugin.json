@@ -1,7 +1,7 @@
 {
   "id": "seller-assistant",
   "name": "Seller Assistant",
-  "description": "Seller assistant domain tools for Shopify analytics, inventory, orders, and catalog workflows.",
+  "description": "Generic seller platform runtime with profile discovery, official-doc search, and read-only JavaScript execution.",
   "version": "2026.3.19",
   "skills": ["./skills"],
   "configSchema": {
@@ -10,64 +10,45 @@
     "properties": {
       "currency": {
         "type": "string",
-        "description": "Display currency fallback used when a tool output does not have an explicit business currency from source data.",
-        "default": "USD"
+        "description": "Display currency fallback used when result formatting needs a currency code."
       },
       "locale": {
         "type": "string",
-        "description": "Display locale used for formatted tool output.",
-        "default": "en-US"
+        "description": "Display locale used for formatted tool output."
       },
-      "defaultStoreId": {
+      "timeZone": {
         "type": "string",
-        "description": "Store profile to use when the user does not specify a store."
+        "description": "Fallback timezone used for display formatting."
       },
-      "stores": {
-        "type": "object",
-        "description": "Configured seller stores grouped by platform.",
-        "additionalProperties": false,
-        "properties": {
-          "shopify": {
-            "type": "array",
-            "items": {
+      "defaultProfile": {
+        "type": "string",
+        "description": "Profile to use when a tool call omits profileId."
+      },
+      "profiles": {
+        "type": "array",
+        "description": "Configured provider profiles that tools can search and execute against.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Stable local identifier for the profile."
+            },
+            "name": {
+              "type": "string",
+              "description": "Display name for the profile."
+            },
+            "provider": {
+              "type": "string",
+              "description": "Built-in provider name such as shopify."
+            },
+            "connection": {
               "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "description": "Local identifier for this Shopify store profile."
-                },
-                "name": {
-                  "type": "string",
-                  "description": "Display name for this Shopify store profile."
-                },
-                "storeDomain": {
-                  "type": "string",
-                  "description": "The merchant-owned *.myshopify.com store domain where the merchant's own Shopify app is installed."
-                },
-                "clientId": {
-                  "type": "string",
-                  "description": "Client id of the merchant-owned Shopify app used for this store. This plugin does not provide a shared public Shopify app."
-                },
-                "clientSecretEnv": {
-                  "type": "string",
-                  "description": "Environment variable name on the OpenClaw host that contains the merchant-owned Shopify app client secret."
-                },
-                "operations": {
-                  "type": "object",
-                  "description": "Store-level operational inputs for Shopify sales lookback behavior.",
-                  "additionalProperties": false,
-                  "properties": {
-                    "salesLookbackDays": {
-                      "type": "number",
-                      "description": "Optional sales lookback window in days for Shopify-backed orders and product fact queries on this store."
-                    }
-                  }
-                }
-              },
-              "required": ["id", "name", "storeDomain", "clientId", "clientSecretEnv"]
+              "description": "Provider-specific connection settings."
             }
-          }
+          },
+          "required": ["id", "name", "provider", "connection"]
         }
       }
     }
