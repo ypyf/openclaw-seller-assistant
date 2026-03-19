@@ -8,11 +8,13 @@
 It packages four grouped seller tools:
 
 - `seller_analytics`: store-level sales facts for one window or fixed multi-window summaries
-- `seller_inventory`: product-level inventory lookup
-- `seller_orders`: product-level recent sales facts plus draft-order query/create/update/invoice_send/complete, fulfillment-order query/hold/release_hold/move, order query/get/update/cancel/capture, order-edit session begin, fulfillment creation, return query/create, and refund creation
-- `seller_catalog`: paginated product and variant browse/list queries plus product fact bundles with inventory, recent sales, price, cost, and margin facts when available
+- `seller_inventory`: product-level inventory lookup plus location browse/list queries and per-location inventory level breakdowns
+- `seller_orders`: product-level recent sales facts plus draft-order query/create/update/invoice_send/complete, fulfillment-order query/hold/release_hold/move, order query/get/update/cancel/capture, order-edit session begin/set_quantity/commit, fulfillment creation, return query/create, and refund creation
+- `seller_catalog`: paginated product, variant, and collection browse/list queries plus product fact bundles with inventory, recent sales, price, cost, and margin facts when available
 
-For the broader Shopify Admin API sales/ops coverage plan and the mechanism-only tool direction, see [Shopify Admin Sales/Ops Capability Map](./docs/shopify-admin-sales-ops-capability-map.md).
+The public tool surface focuses on high-value seller-ops primitives through a small set of grouped tools, while skills handle pagination, query composition, comparisons, summarization, and other orchestration.
+
+For the broader seller-ops primitive coverage plan and the mechanism-only tool direction, see [Shopify Admin Sales/Ops Capability Map](./docs/shopify-admin-sales-ops-capability-map.md).
 
 ## Install
 
@@ -37,7 +39,7 @@ openclaw plugins doctor
 
 Plugin skills are loaded with the plugin, so restart the gateway after changes to the plugin or its `skills/` directory.
 
-By default, these registered tools do not need to be added to a manual allowlist. Only add explicit plugin or tool allowlist entries if your OpenClaw config already uses restrictive `plugins.allow` or `tools.allow` policies.
+In standard OpenClaw configs, these registered tools work without manual allowlist entries. Add explicit plugin or tool allowlist entries when your OpenClaw config uses restrictive `plugins.allow` or `tools.allow` policies.
 
 For restricted configs, add the plugin id under `plugins.allow` and list the tool names under `tools.allow`:
 
@@ -106,8 +108,8 @@ Example:
 In that structure:
 
 - `stores.shopify` is a list of Shopify stores
-- `defaultStoreId` is optional when only one store is configured. If set, it should match one store `id` and is used when the user does not specify a store.
-- `currency` is a fallback display currency for outputs that do not have an explicit business currency from source data. It does not override Shopify's actual store or order currency.
+- When only one store is configured, you can omit `defaultStoreId`. If set, it should match one store `id` and is used when the user leaves the store unspecified.
+- `currency` is a fallback display currency for outputs that lack an explicit business currency from source data. Shopify store and order currency continue to come from Shopify itself.
 - `locale` controls date, number, and currency formatting for tool output
 - `stores.shopify[].operations.salesLookbackDays` overrides the built-in 30-day lookback for Shopify-backed orders and product fact queries
 
@@ -125,7 +127,7 @@ This plugin uses a `bring your own Shopify app` model tied to the same organizat
 - that app is installed on a store the merchant owns
 - the merchant then configures this plugin with that store's `storeDomain`, `clientId`, and `clientSecretEnv`
 
-The plugin requests Admin API access using the merchant's own app credentials. This is a same-organization app model. It does not require a legacy store-admin custom app, but it does require that the app and the target store belong to the same owner or organization.
+The plugin requests Admin API access using the merchant's own app credentials. This is a same-organization app model, where the app and the target store belong to the same owner or organization.
 
 ## Shopify Setup
 
@@ -151,7 +153,7 @@ Example environment setup:
 export SHOPIFY_CLIENT_SECRET="shpss_..."
 ```
 
-Admin API scopes are configured on the Shopify app itself, not in this plugin config.
+Configure Admin API scopes on the Shopify app itself.
 
 To use `seller_analytics` with Shopify, grant the app at least these Admin API scopes:
 
@@ -172,7 +174,7 @@ For `seller_catalog`, `read_products` is required to access `InventoryItem.unitC
 
 Current limitations of the Shopify analytics coverage:
 
-- traffic, conversion, and ad spend are not currently sourced from Shopify
+- current Shopify-sourced analytics focus on sales facts; traffic, conversion, and ad spend remain outside the present source set
 - inventory cover is only available when inventory totals are included and the selected window spans multiple days
 - standard store overview presets include `today`, `yesterday`, `last_7_days`, `last_30_days`, `last_60_days`, `last_90_days`, `last_180_days`, and `last_365_days`
 - `seller_analytics` uses `timeBasis` to decide whether a calendar window should be interpreted in the caller timezone or the store timezone
@@ -186,6 +188,8 @@ After the plugin is loaded, ask the agent in natural language:
 - "Show a store sales summary for my default store."
 - "Check store health for my default store."
 - "Check inventory for short sleeve in my default store."
+- "List locations in my default store."
+- "Show per-location inventory for SKU WM-01 in my default store."
 - "Show the latest paid unfulfilled orders in my default store."
 - "List open draft orders in my default store."
 - "Create a draft order for 2 units of SKU WM-01 in my default store."
@@ -198,6 +202,8 @@ After the plugin is loaded, ask the agent in natural language:
 - "Get order gid://shopify/Order/1001 in my default store."
 - "Update order gid://shopify/Order/1001 and add note gift wrap plus tag vip."
 - "Begin an order edit for gid://shopify/Order/1001 in my default store."
+- "Reduce calculated line item gid://shopify/CalculatedLineItem/1 to quantity 2 in calculated order gid://shopify/CalculatedOrder/1."
+- "Commit order edit gid://shopify/CalculatedOrder/1 and notify the customer."
 - "Cancel order gid://shopify/Order/1001 without refunding the original payment methods and restock the items."
 - "Capture 25 USD on order gid://shopify/Order/1001 using authorized transaction gid://shopify/OrderTransaction/1."
 - "Create a fulfillment for fulfillment order gid://shopify/FulfillmentOrder/1 with tracking number 1Z999."
@@ -205,6 +211,7 @@ After the plugin is loaded, ask the agent in natural language:
 - "Create a return for fulfillment line item gid://shopify/FulfillmentLineItem/1 on order gid://shopify/Order/1001."
 - "Refund one unit on order gid://shopify/Order/1001 and note customer appeasement."
 - "List active products in my default store."
+- "List collections matching summer in my default store."
 - "Show variants matching SKU WM-01 in my default store."
 - "List every SKU in my default store."
 - "Should I restock, discount, or clear SKU WM-01 in my default store?"
@@ -218,15 +225,17 @@ More examples are available in [Usage Examples](./docs/usage-examples.md).
 
 - Product title resolution supports full titles and title keywords.
 - Ambiguous title-keyword searches return candidate choices instead of auto-selecting a product.
-- SKU matching is exact. SKU prefixes or partial SKU fragments are not supported.
+- SKU matching uses exact SKU values.
 - The current public tool surface is domain-grouped: `seller_analytics`, `seller_inventory`, `seller_orders`, and `seller_catalog`.
-- The grouped interface is still ahead of the domain depth: `seller_inventory` is currently inventory-query only, `seller_catalog` now covers product facts plus lightweight product and variant browse/list queries, and `seller_orders` now covers product sales facts, draft orders, fulfillment-order query/hold/release_hold/move, order query/get/update/cancel/capture, order-edit session begin, fulfillment creation, return query/create, and refund creation but still lacks follow-on order-edit mutations and richer fulfillment/return lifecycle actions.
+- Skills can compose pagination, combined filtering, comparisons, summarization, and other multi-step reads. Tool-native read and write primitives define the exact capability boundary, and missing primitives remain tracked coverage gaps.
+- The grouped interface is still ahead of the domain depth: `seller_inventory` now covers aggregate product inventory, location browse/list queries, and per-location inventory levels but still lacks write-side inventory mutations; `seller_catalog` now covers product facts plus lightweight product, variant, and collection browse/list queries; and `seller_orders` now covers product sales facts, draft orders, fulfillment-order query/hold/release_hold/move, order query/get/update/cancel/capture, order-edit session begin/set_quantity/commit, fulfillment creation, return query/create, and refund creation but still lacks broader order-edit mutations and richer fulfillment/return lifecycle actions.
 - For store-level sales, use `seller_analytics` with `resource: "store_sales"`. Use `operation: "overview"` for one window and `operation: "summary"` for fixed multi-window summaries.
 - For `seller_analytics`, always set `timeBasis`. Use `timeBasis: "caller"` with `callerTimeZone` for user-local windows, and `timeBasis: "store"` only when the user explicitly wants the store-local calendar.
 - Store-level sales routing is skill-led: `store-sales-summary` handles factual store sales requests and `store-analysis` handles diagnosis or next-step advice, both using `seller_analytics`.
-- `seller_orders` should still not be used for store totals. Its sales-reporting capability is product-level; use `seller_analytics` for store-level numbers.
+- `seller_orders` serves product-level sales reporting; use `seller_analytics` for store-level numbers.
 - `seller_orders` and `seller_catalog` use explicit `resource`, `operation`, and `input` dispatch for domain actions.
-- For `seller_catalog`, use `resource: "product_facts"` to load one product fact bundle, `resource: "product"` to query product summaries, and `resource: "variant"` to query variant summaries. Complete SKU lists use variant queries with `query: "sku:*"` and `input.allPages: true`.
+- For `seller_inventory`, use `resource: "product"` for aggregate inventory, `resource: "location"` for location browse/list queries, and `resource: "inventory_level"` for per-location inventory breakdowns.
+- For `seller_catalog`, use `resource: "product_facts"` to load one product fact bundle, `resource: "product"` to query product summaries, `resource: "variant"` to query variant summaries, and `resource: "collection"` to query collection summaries. Complete SKU lists use variant queries with `query: "sku:*"` and `input.allPages: true`.
 - Product decisions are skill-led: the `product-decision` skill should call `seller_catalog` for facts, then reason about replenishment, markdown, or clearance in the agent/skill layer.
 - Campaign and operational strategy should use grouped fact tools rather than adding new decision-only tools.
 

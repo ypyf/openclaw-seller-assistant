@@ -12,6 +12,7 @@ import {
   beginShopifyOrderEdit,
   cancelShopifyOrder,
   captureShopifyOrder,
+  commitShopifyOrderEdit,
   completeShopifyDraftOrder,
   createShopifyDraftOrder,
   createShopifyFulfillment,
@@ -19,19 +20,24 @@ import {
   createShopifyReturn,
   getShopifyOrder,
   holdShopifyFulfillmentOrder,
+  loadShopifyInventoryLevels,
   loadShopifyInventorySnapshot,
   loadShopifyProductActionSnapshot,
   moveShopifyFulfillmentOrder,
+  queryShopifyCatalogCollections,
   queryShopifyCatalogProducts,
   queryShopifyCatalogVariants,
   queryShopifyDraftOrders,
   queryShopifyFulfillmentOrders,
+  queryShopifyLocations,
   queryShopifyReturnableFulfillments,
   queryShopifyOrders,
   releaseHoldShopifyFulfillmentOrder,
   sendShopifyDraftOrderInvoice,
+  setShopifyOrderEditLineItemQuantity,
   loadShopifyStoreSalesSummary,
   loadShopifyStoreOverview,
+  type ShopifyCatalogCollectionsQuerySnapshot,
   type ShopifyCatalogProductsQuerySnapshot,
   type ShopifyCatalogVariantsQuerySnapshot,
   type ShopifyDraftOrderActionResult,
@@ -41,8 +47,12 @@ import {
   type ShopifyOrderCancelResult,
   type ShopifyOrderCaptureResult,
   type ShopifyOrderEditBeginResult,
+  type ShopifyOrderEditCommitResult,
+  type ShopifyOrderEditSetQuantityResult,
   type ShopifyFulfillmentCreateResult,
+  type ShopifyInventoryLevelsSnapshot,
   type ShopifyInventorySnapshot,
+  type ShopifyLocationsQuerySnapshot,
   type ShopifyOrderDetailSnapshot,
   type ShopifyOrderUpdateResult,
   type ShopifyOrdersQuerySnapshot,
@@ -155,6 +165,51 @@ const SellerAnalyticsParamsSchema = Type.Object(
   { additionalProperties: false },
 )
 
+const SellerInventoryInputSchema = Type.Object(
+  {
+    productRef: Type.Optional(
+      Type.String({
+        description:
+          "Exact SKU, full product title, or product title keywords to search in Shopify before returning inventory facts.",
+      }),
+    ),
+    query: Type.Optional(
+      Type.String({
+        description:
+          'Optional Shopify location search query string such as "name:Warehouse" or "active:true".',
+      }),
+    ),
+    first: Type.Optional(
+      Type.Number({
+        description: "Optional page size from 1 to 50. Defaults to 25.",
+      }),
+    ),
+    after: Type.Optional(
+      Type.String({
+        description: "Optional pagination cursor returned by the previous location query call.",
+      }),
+    ),
+    includeInactive: Type.Optional(
+      Type.Boolean({
+        description:
+          "Optional flag to include inactive Shopify locations in location query results.",
+      }),
+    ),
+    locationIds: Type.Optional(
+      Type.Array(
+        Type.String({
+          description: 'Shopify location GID such as "gid://shopify/Location/123".',
+        }),
+        {
+          description:
+            "Optional location filter list for per-location inventory breakdown queries.",
+        },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+)
+
 const SellerInventoryParamsSchema = Type.Object(
   {
     storeId: Type.Optional(
@@ -163,16 +218,16 @@ const SellerInventoryParamsSchema = Type.Object(
           "Optional configured store id. If omitted, use defaultStoreId or the first configured store when loading Shopify data.",
       }),
     ),
-    resource: Type.Literal("product", {
-      description: 'Inventory resource family. Use "product" for product-level inventory lookup.',
-    }),
-    operation: Type.Literal("query", {
-      description: 'Use "query" to look up current Shopify inventory facts.',
-    }),
-    productRef: Type.String({
+    resource: Type.String({
       description:
-        "Exact SKU, full product title, or product title keywords to search in Shopify before returning on-hand inventory.",
+        'Inventory resource family. Use "product" for aggregate inventory, "location" for location browse/list queries, and "inventory_level" for per-location inventory breakdowns.',
+      enum: ["product", "location", "inventory_level"],
     }),
+    operation: Type.String({
+      description: 'Use "query" to load inventory facts without strategy text.',
+      enum: ["query"],
+    }),
+    input: SellerInventoryInputSchema,
   },
   { additionalProperties: false },
 )
@@ -732,6 +787,50 @@ const SellerOrdersOrderEditBeginInputSchema = Type.Object(
   { additionalProperties: false },
 )
 
+const SellerOrdersOrderEditSetQuantityInputSchema = Type.Object(
+  {
+    editId: Type.String({
+      description:
+        'Calculated-order or order-edit-session GID such as "gid://shopify/CalculatedOrder/123" or "gid://shopify/OrderEditSession/123".',
+    }),
+    lineItemId: Type.String({
+      description:
+        'Calculated line-item GID such as "gid://shopify/CalculatedLineItem/123" returned from `resource: "order_edit"` and `operation: "begin"`.',
+    }),
+    quantity: Type.Number({
+      description:
+        "New staged quantity for the calculated line item. Pass 0 to remove the line item from the staged edit.",
+    }),
+    restock: Type.Optional(
+      Type.Boolean({
+        description:
+          "Optional restock flag used when the staged quantity is decreased or set to zero.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+)
+
+const SellerOrdersOrderEditCommitInputSchema = Type.Object(
+  {
+    editId: Type.String({
+      description:
+        'Calculated-order or order-edit-session GID such as "gid://shopify/CalculatedOrder/123" or "gid://shopify/OrderEditSession/123".',
+    }),
+    notifyCustomer: Type.Optional(
+      Type.Boolean({
+        description: "Optional flag to notify the customer when the order edit is committed.",
+      }),
+    ),
+    staffNote: Type.Optional(
+      Type.String({
+        description: "Optional internal note recorded with the committed order edit.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+)
+
 const FulfillmentOrderLineItemInputSchema = Type.Object(
   {
     id: Type.String({
@@ -857,7 +956,7 @@ const SellerOrdersParamsSchema = Type.Object(
     }),
     operation: Type.String({
       description:
-        'Orders operation. Supported values include "query", "create", "update", "invoice_send", "complete", "hold", "release_hold", "move", "get", "cancel", "capture", and "begin" depending on the resource.',
+        'Orders operation. Supported values include "query", "create", "update", "invoice_send", "complete", "hold", "release_hold", "move", "get", "cancel", "capture", "begin", "set_quantity", and "commit" depending on the resource.',
       enum: [
         "query",
         "create",
@@ -871,6 +970,8 @@ const SellerOrdersParamsSchema = Type.Object(
         "cancel",
         "capture",
         "begin",
+        "set_quantity",
+        "commit",
       ],
     }),
     input: Type.Object(
@@ -935,8 +1036,8 @@ const SellerCatalogParamsSchema = Type.Object(
     ),
     resource: Type.String({
       description:
-        'Catalog resource family. Use "product_facts" for one product fact bundle, "product" for product browse/list queries, and "variant" for variant browse/list queries.',
-      enum: ["product_facts", "product", "variant"],
+        'Catalog resource family. Use "product_facts" for one product fact bundle, "product" for product browse/list queries, "variant" for variant browse/list queries, and "collection" for collection browse/list queries.',
+      enum: ["product_facts", "product", "variant", "collection"],
     }),
     operation: Type.String({
       description:
@@ -956,6 +1057,40 @@ type SellerCatalogParams = Static<typeof SellerCatalogParamsSchema>
 const normalizeToolString = (value: string | undefined) => {
   const trimmedValue = value?.trim()
   return trimmedValue && trimmedValue.length > 0 ? trimmedValue : undefined
+}
+
+const getInventoryProductRef = (input: SellerInventoryParams["input"]) =>
+  normalizeToolString(input.productRef)
+
+const getInventoryLocationQueryInput = (input: SellerInventoryParams["input"]) => {
+  const query = normalizeToolString(input.query)
+  const after = normalizeToolString(input.after)
+
+  return {
+    ...(query ? { query } : {}),
+    ...(typeof input.first === "number" ? { first: input.first } : {}),
+    ...(after ? { after } : {}),
+    ...(typeof input.includeInactive === "boolean"
+      ? { includeInactive: input.includeInactive }
+      : {}),
+  }
+}
+
+const getInventoryLevelsInput = (input: SellerInventoryParams["input"]) => {
+  const productRef = normalizeToolString(input.productRef)
+  if (!productRef) {
+    return undefined
+  }
+
+  const locationIds =
+    input.locationIds
+      ?.map(locationId => locationId.trim())
+      .filter((locationId): locationId is string => Boolean(locationId)) ?? []
+
+  return {
+    productRef,
+    ...(locationIds.length > 0 ? { locationIds } : {}),
+  }
 }
 
 const getCatalogProductFactsInput = (input: SellerCatalogParams["input"]) => {
@@ -997,6 +1132,9 @@ const validateToolInput = <Schema extends TSchema>(
   schema: Schema,
   input: unknown,
 ): Static<Schema> | undefined => (Value.Check(schema, input) ? input : undefined)
+
+const invalidSellerInventoryInput = (resource: string, operation: string) =>
+  textResult(`seller_inventory ${resource} ${operation} input is invalid.`)
 
 const invalidSellerOrdersInput = (resource: string, operation: string) =>
   textResult(`seller_orders ${resource} ${operation} input is invalid.`)
@@ -1089,12 +1227,15 @@ export type SellerToolDependencies = {
   loadShopifyStoreOverview: typeof loadShopifyStoreOverview
   loadShopifyStoreSalesSummary: typeof loadShopifyStoreSalesSummary
   loadShopifyInventorySnapshot: typeof loadShopifyInventorySnapshot
+  loadShopifyInventoryLevels: typeof loadShopifyInventoryLevels
   loadShopifySalesSnapshot: typeof loadShopifySalesSnapshot
   loadShopifyProductActionSnapshot: typeof loadShopifyProductActionSnapshot
+  queryShopifyCatalogCollections: typeof queryShopifyCatalogCollections
   queryShopifyCatalogProducts: typeof queryShopifyCatalogProducts
   queryShopifyCatalogVariants: typeof queryShopifyCatalogVariants
   queryShopifyDraftOrders: typeof queryShopifyDraftOrders
   queryShopifyFulfillmentOrders: typeof queryShopifyFulfillmentOrders
+  queryShopifyLocations: typeof queryShopifyLocations
   queryShopifyOrders: typeof queryShopifyOrders
   queryShopifyReturnableFulfillments: typeof queryShopifyReturnableFulfillments
   getShopifyOrder: typeof getShopifyOrder
@@ -1109,6 +1250,8 @@ export type SellerToolDependencies = {
   cancelShopifyOrder: typeof cancelShopifyOrder
   captureShopifyOrder: typeof captureShopifyOrder
   beginShopifyOrderEdit: typeof beginShopifyOrderEdit
+  setShopifyOrderEditLineItemQuantity: typeof setShopifyOrderEditLineItemQuantity
+  commitShopifyOrderEdit: typeof commitShopifyOrderEdit
   createShopifyFulfillment: typeof createShopifyFulfillment
   createShopifyReturn: typeof createShopifyReturn
   createShopifyRefund: typeof createShopifyRefund
@@ -1118,12 +1261,15 @@ const DEFAULT_SELLER_TOOL_DEPENDENCIES: SellerToolDependencies = {
   loadShopifyStoreOverview,
   loadShopifyStoreSalesSummary,
   loadShopifyInventorySnapshot,
+  loadShopifyInventoryLevels,
   loadShopifySalesSnapshot,
   loadShopifyProductActionSnapshot,
+  queryShopifyCatalogCollections,
   queryShopifyCatalogProducts,
   queryShopifyCatalogVariants,
   queryShopifyDraftOrders,
   queryShopifyFulfillmentOrders,
+  queryShopifyLocations,
   queryShopifyOrders,
   queryShopifyReturnableFulfillments,
   getShopifyOrder,
@@ -1138,6 +1284,8 @@ const DEFAULT_SELLER_TOOL_DEPENDENCIES: SellerToolDependencies = {
   cancelShopifyOrder,
   captureShopifyOrder,
   beginShopifyOrderEdit,
+  setShopifyOrderEditLineItemQuantity,
+  commitShopifyOrderEdit,
   createShopifyFulfillment,
   createShopifyReturn,
   createShopifyRefund,
@@ -1154,6 +1302,78 @@ const formatInventoryLookup = (input: ShopifyInventorySnapshot) =>
   ]
     .filter(Boolean)
     .join("\n")
+
+const formatLocationQuery = (input: ShopifyLocationsQuerySnapshot, options: { locale: string }) => {
+  const headerLines = [
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, options.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
+    `Query: ${input.query ?? "locations"}`,
+    `Returned locations: ${input.locations.length}`,
+    `Has next page: ${input.pageInfo.hasNextPage ? "yes" : "no"}`,
+    input.pageInfo.endCursor ? `End cursor: ${input.pageInfo.endCursor}` : null,
+  ].filter(Boolean)
+
+  const locationLines =
+    input.locations.length > 0
+      ? input.locations.map(location =>
+          [
+            `- ${location.name}`,
+            location.id,
+            location.isActive === null
+              ? "active unknown"
+              : location.isActive
+                ? "active"
+                : "inactive",
+            location.fulfillsOnlineOrders === null
+              ? "online fulfillment unknown"
+              : location.fulfillsOnlineOrders
+                ? "fulfills online orders"
+                : "no online fulfillment",
+            location.hasActiveInventory === null
+              ? "inventory unknown"
+              : location.hasActiveInventory
+                ? "has active inventory"
+                : "no active inventory",
+            location.address ?? null,
+          ]
+            .filter(Boolean)
+            .join(" | "),
+        )
+      : ["Locations: none"]
+
+  return [...headerLines, "", ...locationLines].join("\n")
+}
+
+const formatInventoryLevels = (input: ShopifyInventoryLevelsSnapshot) => {
+  const locationLines =
+    input.locationLevels.length > 0
+      ? input.locationLevels.map(level =>
+          [
+            `- ${level.locationName ?? level.locationId ?? "unknown location"}`,
+            level.locationId ?? "location id unavailable",
+            level.available === null ? "available n/a" : `available ${Math.round(level.available)}`,
+            level.onHand === null ? "on hand n/a" : `on hand ${Math.round(level.onHand)}`,
+            level.committed === null ? "committed n/a" : `committed ${Math.round(level.committed)}`,
+            level.reserved === null ? "reserved n/a" : `reserved ${Math.round(level.reserved)}`,
+            level.incoming === null ? "incoming n/a" : `incoming ${Math.round(level.incoming)}`,
+          ].join(" | "),
+        )
+      : ["Per-location inventory: none"]
+
+  return [
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, input.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
+    `Product: ${input.productName}`,
+    `SKUs: ${input.resolvedSkus.join(", ")}`,
+    "",
+    "Per-location inventory:",
+    ...locationLines,
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
 
 const formatSalesLookup = (input: ShopifySalesSnapshot) =>
   [
@@ -1689,7 +1909,7 @@ const formatOrderEditBegin = (input: ShopifyOrderEditBeginResult, options: { loc
     `Retrieved at: ${formatDateTime(input.retrievedAtIso, options.locale, input.timezone)}`,
     `Store: ${input.storeName}`,
     input.orderName ? `Order: ${input.orderName}` : null,
-    `Order ID: ${input.orderId}`,
+    input.orderId ? `Order ID: ${input.orderId}` : "Order ID: unavailable",
     input.orderEditSessionId
       ? `Order edit session ID: ${input.orderEditSessionId}`
       : "Order edit session ID: unavailable",
@@ -1712,6 +1932,75 @@ const formatOrderEditBegin = (input: ShopifyOrderEditBeginResult, options: { loc
     .filter(Boolean)
     .join("\n")
 }
+
+const formatOrderEditSetQuantity = (
+  input: ShopifyOrderEditSetQuantityResult,
+  options: { locale: string },
+) => {
+  const lineItemLines =
+    input.lineItems.length > 0
+      ? input.lineItems.map(lineItem =>
+          [
+            `- ${lineItem.title}`,
+            lineItem.id,
+            lineItem.sku ?? "no-sku",
+            `qty ${Math.round(lineItem.quantity)}`,
+          ].join(" | "),
+        )
+      : ["- none"]
+
+  return [
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, options.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
+    input.orderName ? `Order: ${input.orderName}` : null,
+    input.orderId ? `Order ID: ${input.orderId}` : "Order ID: unavailable",
+    input.orderEditSessionId
+      ? `Order edit session ID: ${input.orderEditSessionId}`
+      : "Order edit session ID: unavailable",
+    input.calculatedOrderId
+      ? `Calculated order ID: ${input.calculatedOrderId}`
+      : "Calculated order ID: unavailable",
+    input.editedLineItem ? `Edited line item ID: ${input.editedLineItem.id}` : null,
+    input.editedLineItem
+      ? `Edited line item qty: ${Math.round(input.editedLineItem.quantity)}`
+      : null,
+    `Subtotal line-item quantity: ${Math.round(input.subtotalLineItemsQuantity)}`,
+    `Subtotal: ${currency(input.subtotalPrice, input.currencyCode, options.locale)}`,
+    `Total outstanding: ${currency(input.totalOutstanding, input.currencyCode, options.locale)}`,
+    `Staged changes: ${
+      input.stagedChangeTypes.length > 0 ? input.stagedChangeTypes.join(", ") : "none"
+    }`,
+    "",
+    "Calculated order line items:",
+    ...lineItemLines,
+    "",
+    "User errors:",
+    ...formatMutationUserErrors(input.userErrors),
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
+const formatOrderEditCommit = (input: ShopifyOrderEditCommitResult, options: { locale: string }) =>
+  [
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, options.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
+    input.orderName ? `Order: ${input.orderName}` : null,
+    input.orderId ? `Order ID: ${input.orderId}` : "Order ID: unavailable",
+    input.displayFinancialStatus ? `Financial status: ${input.displayFinancialStatus}` : null,
+    input.displayFulfillmentStatus ? `Fulfillment status: ${input.displayFulfillmentStatus}` : null,
+    `Total: ${currency(input.totalPrice, input.currencyCode, options.locale)}`,
+    input.successMessages.length > 0
+      ? `Success messages: ${input.successMessages.join("; ")}`
+      : "Success messages: none",
+    "",
+    "User errors:",
+    ...formatMutationUserErrors(input.userErrors),
+  ]
+    .filter(Boolean)
+    .join("\n")
 
 const formatFulfillmentCreate = (
   input: ShopifyFulfillmentCreateResult,
@@ -1856,6 +2145,46 @@ const formatCatalogProductsQuery = (
       : ["Products: none"]
 
   return [...headerLines, "", ...productLines].join("\n")
+}
+
+const formatCatalogCollectionsQuery = (
+  input: ShopifyCatalogCollectionsQuerySnapshot,
+  options: { locale: string },
+) => {
+  const headerLines = [
+    `Source: ${input.source}`,
+    `Retrieved at: ${formatDateTime(input.retrievedAtIso, options.locale, input.timezone)}`,
+    `Store: ${input.storeName}`,
+    `Query: ${input.query ?? "catalog collections"}`,
+    `Returned collections: ${input.collections.length}`,
+    `Has next page: ${input.pageInfo.hasNextPage ? "yes" : "no"}`,
+    input.pageInfo.endCursor ? `End cursor: ${input.pageInfo.endCursor}` : null,
+  ].filter(Boolean)
+
+  const collectionLines =
+    input.collections.length > 0
+      ? input.collections.map(collection =>
+          [
+            `- ${collection.title}`,
+            collection.handle ?? "no-handle",
+            collection.collectionType,
+            collection.sortOrder ?? "sort unknown",
+            collection.updatedAt
+              ? formatDateTime(collection.updatedAt, options.locale, input.timezone)
+              : "updated at unavailable",
+            collection.rules.length > 0
+              ? `rules ${collection.rules
+                  .map(rule =>
+                    [rule.column, rule.relation, rule.condition].filter(Boolean).join(" "),
+                  )
+                  .join("; ")}`
+              : "manual collection",
+            collection.id,
+          ].join(" | "),
+        )
+      : ["Collections: none"]
+
+  return [...headerLines, "", ...collectionLines].join("\n")
 }
 
 const formatCatalogVariantsQuery = (
@@ -2104,7 +2433,7 @@ export const registerSellerTools = (
     name: "seller_inventory",
     label: "Seller Inventory",
     description:
-      'Look up current Shopify inventory by domain. Use `resource: "product"` and `operation: "query"` to return on-hand inventory for an exact SKU or product title search. Try the tool before asking for an exact SKU.',
+      'Look up Shopify inventory by domain. Use `resource: "product"` for aggregate on-hand inventory, `resource: "location"` for location browse/list queries, and `resource: "inventory_level"` for per-location inventory breakdowns.',
     parameters: SellerInventoryParamsSchema,
     async execute(_id: string, params: SellerInventoryParams) {
       const store = findConfiguredStore(pluginConfig, params.storeId)
@@ -2114,21 +2443,77 @@ export const registerSellerTools = (
         )
       }
 
-      const snapshot = await dependencies.loadShopifyInventorySnapshot(
-        store,
-        params.productRef,
-        pluginConfig.locale,
-      )
-      if (snapshot.kind !== "ready") {
-        return textResult(snapshot.message)
+      if (params.resource === "product" && params.operation === "query") {
+        const productRef = getInventoryProductRef(params.input)
+        if (!productRef) {
+          return invalidSellerInventoryInput(params.resource, params.operation)
+        }
+
+        const snapshot = await dependencies.loadShopifyInventorySnapshot(
+          store,
+          productRef,
+          pluginConfig.locale,
+        )
+        if (snapshot.kind !== "ready") {
+          return textResult(snapshot.message)
+        }
+        return textResultWithDetails(formatInventoryLookup(snapshot.value), {
+          status: "ok",
+          domain: "inventory",
+          resource: params.resource,
+          operation: params.operation,
+          data: snapshot.value,
+        })
       }
-      return textResultWithDetails(formatInventoryLookup(snapshot.value), {
-        status: "ok",
-        domain: "inventory",
-        resource: params.resource,
-        operation: params.operation,
-        data: snapshot.value,
-      })
+
+      if (params.resource === "location" && params.operation === "query") {
+        const snapshot = await dependencies.queryShopifyLocations(
+          store,
+          getInventoryLocationQueryInput(params.input),
+        )
+
+        return textResultWithDetails(
+          formatLocationQuery(snapshot, {
+            locale: pluginConfig.locale,
+          }),
+          {
+            status: "ok",
+            domain: "inventory",
+            resource: params.resource,
+            operation: params.operation,
+            data: snapshot,
+          },
+        )
+      }
+
+      if (params.resource === "inventory_level" && params.operation === "query") {
+        const input = getInventoryLevelsInput(params.input)
+        if (!input) {
+          return invalidSellerInventoryInput(params.resource, params.operation)
+        }
+
+        const snapshot = await dependencies.loadShopifyInventoryLevels(
+          store,
+          input.productRef,
+          pluginConfig.locale,
+          {
+            locationIds: input.locationIds,
+          },
+        )
+        if (snapshot.kind !== "ready") {
+          return textResult(snapshot.message)
+        }
+
+        return textResultWithDetails(formatInventoryLevels(snapshot.value), {
+          status: "ok",
+          domain: "inventory",
+          resource: params.resource,
+          operation: params.operation,
+          data: snapshot.value,
+        })
+      }
+
+      return textResult("Unsupported seller_inventory resource/operation combination.")
     },
   })
 
@@ -2136,7 +2521,7 @@ export const registerSellerTools = (
     name: "seller_orders",
     label: "Seller Orders",
     description:
-      'Work with Shopify order-domain facts and actions by domain. Use `resource: "product_sales"` for product-level sales facts, `resource: "draft_order"` for draft-order query/create/update/invoice_send/complete, `resource: "fulfillment_order"` for fulfillment-order query/hold/release_hold/move, `resource: "order"` for order query/get/update/cancel/capture, `resource: "order_edit"` for order-edit session begin, `resource: "fulfillment"` for fulfillment creation, `resource: "return"` for returnable-item query and return creation, and `resource: "refund"` for refund creation.',
+      'Work with Shopify order-domain facts and actions by domain. Use `resource: "product_sales"` for product-level sales facts, `resource: "draft_order"` for draft-order query/create/update/invoice_send/complete, `resource: "fulfillment_order"` for fulfillment-order query/hold/release_hold/move, `resource: "order"` for order query/get/update/cancel/capture, `resource: "order_edit"` for order-edit session begin plus staged quantity updates and commit, `resource: "fulfillment"` for fulfillment creation, `resource: "return"` for returnable-item query and return creation, and `resource: "refund"` for refund creation.',
     parameters: SellerOrdersParamsSchema,
     async execute(_id: string, params: SellerOrdersParams) {
       const store = findConfiguredStore(pluginConfig, params.storeId)
@@ -2510,6 +2895,50 @@ export const registerSellerTools = (
         )
       }
 
+      if (params.resource === "order_edit" && params.operation === "set_quantity") {
+        const input = validateToolInput(SellerOrdersOrderEditSetQuantityInputSchema, params.input)
+        if (!input) {
+          return invalidSellerOrdersInput(params.resource, params.operation)
+        }
+
+        const result = await dependencies.setShopifyOrderEditLineItemQuantity(store, input)
+
+        return textResultWithDetails(
+          formatOrderEditSetQuantity(result, {
+            locale: pluginConfig.locale,
+          }),
+          {
+            status: result.userErrors.length > 0 ? "error" : "ok",
+            domain: "orders",
+            resource: params.resource,
+            operation: params.operation,
+            data: result,
+          },
+        )
+      }
+
+      if (params.resource === "order_edit" && params.operation === "commit") {
+        const input = validateToolInput(SellerOrdersOrderEditCommitInputSchema, params.input)
+        if (!input) {
+          return invalidSellerOrdersInput(params.resource, params.operation)
+        }
+
+        const result = await dependencies.commitShopifyOrderEdit(store, input)
+
+        return textResultWithDetails(
+          formatOrderEditCommit(result, {
+            locale: pluginConfig.locale,
+          }),
+          {
+            status: result.userErrors.length > 0 ? "error" : "ok",
+            domain: "orders",
+            resource: params.resource,
+            operation: params.operation,
+            data: result,
+          },
+        )
+      }
+
       if (params.resource === "fulfillment" && params.operation === "create") {
         const input = validateToolInput(SellerOrdersFulfillmentCreateInputSchema, params.input)
         if (!input) {
@@ -2606,7 +3035,7 @@ export const registerSellerTools = (
     name: "seller_catalog",
     label: "Seller Catalog",
     description:
-      'Work with Shopify catalog facts by domain. Use `resource: "product_facts"` for one product fact bundle with inventory, sales, price, cost, and margin facts, `resource: "product"` for product browse/list queries, and `resource: "variant"` for variant browse/list queries. Variant queries support `input.allPages: true` for complete result sets such as full Shopify SKU listings with `query: "sku:*"`. This tool returns data only and does not make decisions.',
+      'Work with Shopify catalog facts by domain. Use `resource: "product_facts"` for one product fact bundle with inventory, sales, price, cost, and margin facts, `resource: "product"` for product browse/list queries, `resource: "variant"` for variant browse/list queries, and `resource: "collection"` for collection browse/list queries. Variant queries support `input.allPages: true` for complete result sets such as full Shopify SKU listings with `query: "sku:*"`. This tool returns data only and does not make decisions.',
     parameters: SellerCatalogParamsSchema,
     async execute(_id: string, params: SellerCatalogParams) {
       const store = findConfiguredStore(pluginConfig, params.storeId)
@@ -2656,6 +3085,26 @@ export const registerSellerTools = (
 
         return textResultWithDetails(
           formatCatalogProductsQuery(snapshot, {
+            locale: pluginConfig.locale,
+          }),
+          {
+            status: "ok",
+            domain: "catalog",
+            resource: params.resource,
+            operation: params.operation,
+            data: snapshot,
+          },
+        )
+      }
+
+      if (params.resource === "collection" && params.operation === "query") {
+        const snapshot = await dependencies.queryShopifyCatalogCollections(
+          store,
+          getCatalogProductsQueryInput(params.input),
+        )
+
+        return textResultWithDetails(
+          formatCatalogCollectionsQuery(snapshot, {
             locale: pluginConfig.locale,
           }),
           {

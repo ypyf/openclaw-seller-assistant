@@ -29,6 +29,7 @@ TypeScript project using Node.js.
 
 - Do not change dependencies unless necessary
 - Do not preserve backward compatibility or worry about breaking existing callers. Prefer thorough refactors and complete fixes over incremental compatibility layers.
+- Prefer positive framing in documentation and user-facing explanations. Describe supported scope, intended focus, target coverage, and capability boundaries directly; reserve negative phrasing for hard limitations, incompatibilities, or safety-critical constraints.
 
 ## Capability Design Principles
 

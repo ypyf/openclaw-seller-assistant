@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 import { Value } from "@sinclair/typebox/value"
 import type { PluginConfig } from "./config.ts"
 import {
+  type ShopifyCatalogCollectionsQuerySnapshot,
   type ShopifyCatalogProductsQuerySnapshot,
   type ShopifyCatalogVariantsQuerySnapshot,
   type ShopifyDraftOrderActionResult,
@@ -12,8 +13,12 @@ import {
   type ShopifyOrderCancelResult,
   type ShopifyOrderCaptureResult,
   type ShopifyOrderEditBeginResult,
+  type ShopifyOrderEditCommitResult,
+  type ShopifyOrderEditSetQuantityResult,
   type ShopifyFulfillmentCreateResult,
+  type ShopifyInventoryLevelsSnapshot,
   type ShopifyInventorySnapshot,
+  type ShopifyLocationsQuerySnapshot,
   type ShopifyOrderDetailSnapshot,
   type ShopifyOrderUpdateResult,
   type ShopifyOrdersQuerySnapshot,
@@ -69,6 +74,39 @@ const createCatalogProductsQuerySnapshot = (
       status: "ACTIVE",
       vendor: "Acme",
       totalInventory: 120,
+    },
+  ],
+  ...overrides,
+})
+
+const createCatalogCollectionsQuerySnapshot = (
+  overrides: Partial<ShopifyCatalogCollectionsQuerySnapshot> = {},
+): ShopifyCatalogCollectionsQuerySnapshot => ({
+  source: "shopify",
+  retrievedAtIso: "2026-03-18T09:30:00.000Z",
+  storeName: "US Shopify Store",
+  timezone: "America/New_York",
+  query: "title:summer",
+  pageInfo: {
+    hasNextPage: false,
+    endCursor: "collection-cursor-1",
+  },
+  collections: [
+    {
+      id: "gid://shopify/Collection/1",
+      title: "Summer Sale",
+      handle: "summer-sale",
+      updatedAt: "2026-03-18T08:00:00.000Z",
+      sortOrder: "BEST_SELLING",
+      collectionType: "smart",
+      appliedDisjunctively: false,
+      rules: [
+        {
+          column: "TITLE",
+          relation: "CONTAINS",
+          condition: "summer",
+        },
+      ],
     },
   ],
   ...overrides,
@@ -132,6 +170,58 @@ const createInventorySnapshot = (
   productName: "Short sleeve t-shirt",
   sku: "WM-01",
   onHandUnits: 120,
+  ...overrides,
+})
+
+const createLocationsQuerySnapshot = (
+  overrides: Partial<ShopifyLocationsQuerySnapshot> = {},
+): ShopifyLocationsQuerySnapshot => ({
+  source: "shopify",
+  retrievedAtIso: "2026-03-18T09:30:00.000Z",
+  storeName: "US Shopify Store",
+  timezone: "America/New_York",
+  query: "name:warehouse",
+  pageInfo: {
+    hasNextPage: false,
+    endCursor: "location-cursor-1",
+  },
+  locations: [
+    {
+      id: "gid://shopify/Location/1",
+      name: "Main Warehouse",
+      fulfillsOnlineOrders: true,
+      hasActiveInventory: true,
+      isActive: true,
+      address: "1 Main St, New York, NY 10001",
+    },
+  ],
+  ...overrides,
+})
+
+const createInventoryLevelsSnapshot = (
+  overrides: Partial<ShopifyInventoryLevelsSnapshot> = {},
+): ShopifyInventoryLevelsSnapshot => ({
+  source: "shopify",
+  retrievedAtIso: "2026-03-18T09:30:00.000Z",
+  locale: "en-US",
+  storeName: "US Shopify Store",
+  timezone: "America/New_York",
+  productName: "Short sleeve t-shirt",
+  resolvedSkus: ["WM-01", "WM-02"],
+  locationLevels: [
+    {
+      locationId: "gid://shopify/Location/1",
+      locationName: "Main Warehouse",
+      fulfillsOnlineOrders: true,
+      hasActiveInventory: true,
+      isActive: true,
+      available: 20,
+      committed: 3,
+      incoming: 5,
+      onHand: 28,
+      reserved: 0,
+    },
+  ],
   ...overrides,
 })
 
@@ -637,6 +727,58 @@ const createOrderEditBeginResult = (
   ...overrides,
 })
 
+const createOrderEditSetQuantityResult = (
+  overrides: Partial<ShopifyOrderEditSetQuantityResult> = {},
+): ShopifyOrderEditSetQuantityResult => ({
+  source: "shopify",
+  retrievedAtIso: "2026-03-18T09:30:00.000Z",
+  storeName: "US Shopify Store",
+  timezone: "America/New_York",
+  orderId: "gid://shopify/Order/1001",
+  orderName: "#1001",
+  orderEditSessionId: "gid://shopify/OrderEditSession/1",
+  calculatedOrderId: "gid://shopify/CalculatedOrder/1",
+  editedLineItem: {
+    id: "gid://shopify/CalculatedLineItem/1",
+    sku: "WM-01",
+    title: "Short sleeve t-shirt",
+    quantity: 2,
+  },
+  subtotalLineItemsQuantity: 2,
+  subtotalPrice: 82,
+  totalOutstanding: 0,
+  currencyCode: "USD",
+  lineItems: [
+    {
+      id: "gid://shopify/CalculatedLineItem/1",
+      sku: "WM-01",
+      title: "Short sleeve t-shirt",
+      quantity: 2,
+    },
+  ],
+  stagedChangeTypes: ["OrderStagedChangeSetQuantity"],
+  userErrors: [],
+  ...overrides,
+})
+
+const createOrderEditCommitResult = (
+  overrides: Partial<ShopifyOrderEditCommitResult> = {},
+): ShopifyOrderEditCommitResult => ({
+  source: "shopify",
+  retrievedAtIso: "2026-03-18T09:30:00.000Z",
+  storeName: "US Shopify Store",
+  timezone: "America/New_York",
+  orderId: "gid://shopify/Order/1001",
+  orderName: "#1001",
+  displayFinancialStatus: "PAID",
+  displayFulfillmentStatus: "UNFULFILLED",
+  totalPrice: 82,
+  currencyCode: "USD",
+  successMessages: ["Order edit committed"],
+  userErrors: [],
+  ...overrides,
+})
+
 const createReturnCreateResult = (
   overrides: Partial<ShopifyReturnCreateResult> = {},
 ): ShopifyReturnCreateResult => ({
@@ -712,10 +854,26 @@ const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> 
     productRef: string
     locale: string
   }> = []
+  const inventoryLevelCalls: Array<{
+    productRef: string
+    locale: string
+    locationIds?: string[]
+  }> = []
+  const locationQueryCalls: Array<{
+    query?: string
+    first?: number
+    after?: string
+    includeInactive?: boolean
+  }> = []
   const salesCalls: Array<{
     productRef: string
     salesLookbackDays: number
     locale: string
+  }> = []
+  const catalogCollectionQueryCalls: Array<{
+    query?: string
+    first?: number
+    after?: string
   }> = []
   const catalogProductQueryCalls: Array<{
     query?: string
@@ -760,6 +918,8 @@ const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> 
   const orderCancelCalls: Array<Record<string, unknown>> = []
   const orderCaptureCalls: Array<Record<string, unknown>> = []
   const orderEditBeginCalls: string[] = []
+  const orderEditSetQuantityCalls: Array<Record<string, unknown>> = []
+  const orderEditCommitCalls: Array<Record<string, unknown>> = []
   const fulfillmentCreateCalls: Array<Record<string, unknown>> = []
   const returnCreateCalls: Array<Record<string, unknown>> = []
   const refundCreateCalls: Array<Record<string, unknown>> = []
@@ -830,6 +990,17 @@ const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> 
         value: createInventorySnapshot(),
       }
     },
+    async loadShopifyInventoryLevels(_store, productRef, locale, options) {
+      inventoryLevelCalls.push({
+        productRef,
+        locale,
+        locationIds: options?.locationIds,
+      })
+      return {
+        kind: "ready",
+        value: createInventoryLevelsSnapshot(),
+      }
+    },
     async loadShopifySalesSnapshot(_store, productRef, salesLookbackDays, locale) {
       salesCalls.push({ productRef, salesLookbackDays, locale })
       return {
@@ -838,6 +1009,16 @@ const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> 
           lookbackDays: salesLookbackDays,
         }),
       }
+    },
+    async queryShopifyCatalogCollections(_store, input) {
+      catalogCollectionQueryCalls.push({ ...input })
+      return createCatalogCollectionsQuerySnapshot({
+        query: input?.query ?? null,
+        pageInfo: {
+          hasNextPage: Boolean(input?.after),
+          endCursor: input?.after ? `${input.after}-next` : "collection-cursor-1",
+        },
+      })
     },
     async queryShopifyCatalogProducts(_store, input) {
       catalogProductQueryCalls.push({ ...input })
@@ -877,6 +1058,16 @@ const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> 
         pageInfo: {
           hasNextPage: true,
           endCursor: input?.after ? `${input.after}-next` : "fulfillment-order-cursor-1",
+        },
+      })
+    },
+    async queryShopifyLocations(_store, input) {
+      locationQueryCalls.push({ ...input })
+      return createLocationsQuerySnapshot({
+        query: input?.query ?? null,
+        pageInfo: {
+          hasNextPage: Boolean(input?.after),
+          endCursor: input?.after ? `${input.after}-next` : "location-cursor-1",
         },
       })
     },
@@ -1025,6 +1216,14 @@ const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> 
         orderId: input.orderId,
       })
     },
+    async setShopifyOrderEditLineItemQuantity(_store, input) {
+      orderEditSetQuantityCalls.push(input as Record<string, unknown>)
+      return createOrderEditSetQuantityResult()
+    },
+    async commitShopifyOrderEdit(_store, input) {
+      orderEditCommitCalls.push(input as Record<string, unknown>)
+      return createOrderEditCommitResult()
+    },
     async createShopifyFulfillment(_store, input) {
       fulfillmentCreateCalls.push(input as Record<string, unknown>)
       return createFulfillmentCreateResult()
@@ -1070,7 +1269,10 @@ const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> 
     overviewCalls,
     summaryCalls,
     inventoryCalls,
+    inventoryLevelCalls,
+    locationQueryCalls,
     salesCalls,
+    catalogCollectionQueryCalls,
     catalogProductQueryCalls,
     catalogVariantQueryCalls,
     draftOrderQueryCalls,
@@ -1089,6 +1291,8 @@ const createToolHarness = (dependencyOverrides: Partial<SellerToolDependencies> 
     orderCancelCalls,
     orderCaptureCalls,
     orderEditBeginCalls,
+    orderEditSetQuantityCalls,
+    orderEditCommitCalls,
     fulfillmentCreateCalls,
     returnCreateCalls,
     refundCreateCalls,
@@ -1555,7 +1759,9 @@ describe("registerSellerTools", () => {
       tool.execute("tool-call", {
         resource: "product",
         operation: "query",
-        productRef: "WM-01",
+        input: {
+          productRef: "WM-01",
+        },
       }),
     )
 
@@ -1567,6 +1773,64 @@ describe("registerSellerTools", () => {
     ])
     assert.match(text, /^Product: Short sleeve t-shirt$/m)
     assert.match(text, /^On-hand units: 120$/m)
+  })
+
+  it("returns location summaries from seller_inventory", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_inventory")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        resource: "location",
+        operation: "query",
+        input: {
+          query: "name:warehouse",
+          first: 10,
+          includeInactive: true,
+        },
+      }),
+    )
+
+    assert.deepEqual(harness.locationQueryCalls, [
+      {
+        query: "name:warehouse",
+        first: 10,
+        includeInactive: true,
+      },
+    ])
+    assert.match(text, /^Query: name:warehouse$/m)
+    assert.match(text, /^Returned locations: 1$/m)
+    assert.match(text, /Main Warehouse \| gid:\/\/shopify\/Location\/1 \| active/)
+  })
+
+  it("returns per-location inventory levels from seller_inventory", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_inventory")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        resource: "inventory_level",
+        operation: "query",
+        input: {
+          productRef: "WM-01",
+          locationIds: ["gid://shopify/Location/1"],
+        },
+      }),
+    )
+
+    assert.deepEqual(harness.inventoryLevelCalls, [
+      {
+        productRef: "WM-01",
+        locale: "en-US",
+        locationIds: ["gid://shopify/Location/1"],
+      },
+    ])
+    assert.match(text, /^Product: Short sleeve t-shirt$/m)
+    assert.match(text, /^SKUs: WM-01, WM-02$/m)
+    assert.match(
+      text,
+      /Main Warehouse \| gid:\/\/shopify\/Location\/1 \| available 20 \| on hand 28/,
+    )
   })
 
   it("returns product sales from seller_orders", async () => {
@@ -2047,6 +2311,64 @@ describe("registerSellerTools", () => {
     assert.match(text, /gid:\/\/shopify\/CalculatedLineItem\/1/)
   })
 
+  it("sets a staged order-edit line-item quantity through seller_orders", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_orders")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        resource: "order_edit",
+        operation: "set_quantity",
+        input: {
+          editId: "gid://shopify/CalculatedOrder/1",
+          lineItemId: "gid://shopify/CalculatedLineItem/1",
+          quantity: 2,
+          restock: true,
+        },
+      }),
+    )
+
+    assert.deepEqual(harness.orderEditSetQuantityCalls, [
+      {
+        editId: "gid://shopify/CalculatedOrder/1",
+        lineItemId: "gid://shopify/CalculatedLineItem/1",
+        quantity: 2,
+        restock: true,
+      },
+    ])
+    assert.match(text, /^Edited line item ID: gid:\/\/shopify\/CalculatedLineItem\/1$/m)
+    assert.match(text, /^Edited line item qty: 2$/m)
+    assert.match(text, /^Staged changes: OrderStagedChangeSetQuantity$/m)
+  })
+
+  it("commits an order edit through seller_orders", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_orders")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        resource: "order_edit",
+        operation: "commit",
+        input: {
+          editId: "gid://shopify/CalculatedOrder/1",
+          notifyCustomer: true,
+          staffNote: "approved by ops",
+        },
+      }),
+    )
+
+    assert.deepEqual(harness.orderEditCommitCalls, [
+      {
+        editId: "gid://shopify/CalculatedOrder/1",
+        notifyCustomer: true,
+        staffNote: "approved by ops",
+      },
+    ])
+    assert.match(text, /^Order ID: gid:\/\/shopify\/Order\/1001$/m)
+    assert.match(text, /^Total: \$82\.00$/m)
+    assert.match(text, /^Success messages: Order edit committed$/m)
+  })
+
   it("queries returnable fulfillment line items through seller_orders", async () => {
     const harness = createToolHarness()
     const tool = harness.getTool("seller_orders")
@@ -2326,6 +2648,35 @@ describe("registerSellerTools", () => {
       /^- Short sleeve t-shirt \| short-sleeve-t-shirt \| ACTIVE \| Acme \| inventory 120 \| gid:\/\/shopify\/Product\/1$/m,
     )
     assert.match(text, /^End cursor: product-cursor-0-next$/m)
+  })
+
+  it("returns paginated collection summaries from seller_catalog", async () => {
+    const harness = createToolHarness()
+    const tool = harness.getTool("seller_catalog")
+
+    const text = await extractToolText(
+      tool.execute("tool-call", {
+        resource: "collection",
+        operation: "query",
+        input: {
+          query: "title:summer",
+          first: 5,
+          after: "collection-cursor-0",
+        },
+      }),
+    )
+
+    assert.deepEqual(harness.catalogCollectionQueryCalls, [
+      {
+        query: "title:summer",
+        first: 5,
+        after: "collection-cursor-0",
+      },
+    ])
+    assert.match(text, /^Query: title:summer$/m)
+    assert.match(text, /^Returned collections: 1$/m)
+    assert.match(text, /Summer Sale \| summer-sale \| smart \| BEST_SELLING/)
+    assert.match(text, /^End cursor: collection-cursor-0-next$/m)
   })
 
   it("returns paginated variant summaries from seller_catalog", async () => {

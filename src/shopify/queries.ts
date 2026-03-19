@@ -585,6 +585,60 @@ export const SHOPIFY_ORDER_EDIT_BEGIN_MUTATION = `
   }
 `
 
+export const SHOPIFY_ORDER_EDIT_SET_QUANTITY_MUTATION = `
+  mutation SellerOrderEditSetQuantity(
+    $id: ID!
+    $lineItemId: ID!
+    $quantity: Int!
+    $restock: Boolean
+  ) {
+    orderEditSetQuantity(
+      id: $id
+      lineItemId: $lineItemId
+      quantity: $quantity
+      restock: $restock
+    ) {
+      calculatedLineItem {
+        ${SHOPIFY_CALCULATED_ORDER_LINE_ITEM_FIELDS}
+      }
+      calculatedOrder {
+        ${SHOPIFY_CALCULATED_ORDER_FIELDS}
+      }
+      orderEditSession {
+        id
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`
+
+export const SHOPIFY_ORDER_EDIT_COMMIT_MUTATION = `
+  mutation SellerOrderEditCommit($id: ID!, $notifyCustomer: Boolean, $staffNote: String) {
+    orderEditCommit(id: $id, notifyCustomer: $notifyCustomer, staffNote: $staffNote) {
+      order {
+        id
+        name
+        displayFinancialStatus
+        displayFulfillmentStatus
+        currentTotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+      }
+      successMessages
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`
+
 export const SHOPIFY_DRAFT_ORDER_CREATE_MUTATION = `
   mutation SellerDraftOrderCreate($input: DraftOrderInput!) {
     draftOrderCreate(input: $input) {
@@ -862,6 +916,9 @@ export const SHOPIFY_VARIANT_BY_SKU_QUERY = `
         displayName
         price
         inventoryQuantity
+        inventoryItem {
+          id
+        }
         product {
           id
           title
@@ -885,6 +942,7 @@ export const SHOPIFY_VARIANT_BY_SKU_WITH_COST_QUERY = `
         price
         inventoryQuantity
         inventoryItem {
+          id
           unitCost {
             amount
             currencyCode
@@ -974,6 +1032,32 @@ export const SHOPIFY_CATALOG_PRODUCTS_QUERY = `
   }
 `
 
+export const SHOPIFY_CATALOG_COLLECTIONS_QUERY = `
+  query SellerCatalogCollections($first: Int!, $after: String, $query: String) {
+    collections(first: $first, after: $after, query: $query, sortKey: UPDATED_AT, reverse: true) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        title
+        handle
+        updatedAt
+        sortOrder
+        ruleSet {
+          appliedDisjunctively
+          rules {
+            column
+            relation
+            condition
+          }
+        }
+      }
+    }
+  }
+`
+
 export const SHOPIFY_CATALOG_VARIANTS_QUERY = `
   query SellerCatalogVariants($first: Int!, $after: String, $query: String) {
     productVariants(first: $first, after: $after, query: $query) {
@@ -1010,6 +1094,9 @@ export const SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY = `
           displayName
           price
           inventoryQuantity
+          inventoryItem {
+            id
+          }
           product {
             id
             title
@@ -1035,6 +1122,7 @@ export const SHOPIFY_PRODUCT_VARIANTS_PAGE_WITH_COST_QUERY = `
           price
           inventoryQuantity
           inventoryItem {
+            id
             unitCost {
               amount
               currencyCode
@@ -1056,6 +1144,68 @@ export const SHOPIFY_LOCALES_QUERY = `
       nodes {
         locale
         primary
+      }
+    }
+  }
+`
+
+export const SHOPIFY_LOCATIONS_QUERY = `
+  query SellerLocations(
+    $first: Int!
+    $after: String
+    $query: String
+    $includeInactive: Boolean!
+    $includeLegacy: Boolean!
+  ) {
+    locations(
+      first: $first
+      after: $after
+      query: $query
+      includeInactive: $includeInactive
+      includeLegacy: $includeLegacy
+      sortKey: NAME
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        name
+        fulfillsOnlineOrders
+        hasActiveInventory
+        isActive
+        address {
+          formatted
+        }
+      }
+    }
+  }
+`
+
+export const SHOPIFY_INVENTORY_ITEM_LEVELS_QUERY = `
+  query SellerInventoryItemLevels($inventoryItemId: ID!, $after: String) {
+    inventoryItem(id: $inventoryItemId) {
+      id
+      inventoryLevels(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          location {
+            id
+            name
+            fulfillsOnlineOrders
+            hasActiveInventory
+            isActive
+          }
+          quantities(names: ["available", "committed", "incoming", "on_hand", "reserved"]) {
+            name
+            quantity
+          }
+        }
       }
     }
   }

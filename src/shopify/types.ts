@@ -425,6 +425,73 @@ export type ShopifyOrderEditBeginMutation = {
   } | null
 }
 
+export type ShopifyOrderEditSetQuantityMutation = {
+  orderEditSetQuantity?: {
+    calculatedLineItem?: {
+      id?: string | null
+      sku?: string | null
+      title?: string | null
+      quantity?: number | null
+    } | null
+    calculatedOrder?: {
+      id?: string | null
+      originalOrder?: {
+        id?: string | null
+        name?: string | null
+      } | null
+      subtotalLineItemsQuantity?: number | null
+      subtotalPriceSet?: {
+        presentmentMoney?: {
+          amount?: string | null
+          currencyCode?: string | null
+        } | null
+      } | null
+      totalOutstandingSet?: {
+        presentmentMoney?: {
+          amount?: string | null
+          currencyCode?: string | null
+        } | null
+      } | null
+      lineItems?: {
+        nodes?: Array<{
+          id?: string | null
+          sku?: string | null
+          title?: string | null
+          quantity?: number | null
+        }>
+      } | null
+      stagedChanges?: {
+        nodes?: Array<{
+          __typename?: string | null
+        }>
+      } | null
+    } | null
+    orderEditSession?: {
+      id?: string | null
+    } | null
+    userErrors?: ShopifyMutationUserError[] | null
+  } | null
+}
+
+export type ShopifyOrderEditCommitMutation = {
+  orderEditCommit?: {
+    order?: {
+      id?: string | null
+      name?: string | null
+      displayFinancialStatus?: string | null
+      displayFulfillmentStatus?: string | null
+      currentTotalPriceSet?: {
+        shopMoney?: {
+          amount?: string | null
+          currencyCode?: string | null
+        } | null
+      } | null
+    } | null
+    successMessages?: string[] | null
+    userErrors?: ShopifyMutationUserError[] | null
+  } | null
+}
+
 export type ShopifyDraftOrderMutationPayload = {
   draftOrder?: ShopifyDraftOrderNode | null
   userErrors?: ShopifyMutationUserError[] | null
@@ -628,6 +695,7 @@ export type ShopifyVariantLookupPage = {
       price?: string | null
       inventoryQuantity?: number | null
       inventoryItem?: {
+        id?: string | null
         unitCost?: {
           amount?: string | null
           currencyCode?: string | null
@@ -713,6 +781,30 @@ export type ShopifyCatalogProductsQuery = {
   }
 }
 
+export type ShopifyCatalogCollectionsQuery = {
+  collections?: {
+    pageInfo?: {
+      hasNextPage?: boolean
+      endCursor?: string | null
+    }
+    nodes?: Array<{
+      id?: string | null
+      title?: string | null
+      handle?: string | null
+      updatedAt?: string | null
+      sortOrder?: string | null
+      ruleSet?: {
+        appliedDisjunctively?: boolean | null
+        rules?: Array<{
+          column?: string | null
+          relation?: string | null
+          condition?: string | null
+        }> | null
+      } | null
+    }>
+  }
+}
+
 export type ShopifyCatalogVariantsQuery = {
   productVariants?: {
     pageInfo?: {
@@ -747,6 +839,7 @@ export type ShopifyProductVariantsPage = {
         price?: string | null
         inventoryQuantity?: number | null
         inventoryItem?: {
+          id?: string | null
           unitCost?: {
             amount?: string | null
             currencyCode?: string | null
@@ -759,6 +852,51 @@ export type ShopifyProductVariantsPage = {
       }>
     }
   }
+}
+
+export type ShopifyLocationsQuery = {
+  locations?: {
+    pageInfo?: {
+      hasNextPage?: boolean
+      endCursor?: string | null
+    }
+    nodes?: Array<{
+      id?: string | null
+      name?: string | null
+      fulfillsOnlineOrders?: boolean | null
+      hasActiveInventory?: boolean | null
+      isActive?: boolean | null
+      address?: {
+        formatted?: string[] | null
+      } | null
+    }>
+  }
+}
+
+export type ShopifyInventoryItemLevelsQuery = {
+  inventoryItem?: {
+    id?: string | null
+    inventoryLevels?: {
+      pageInfo?: {
+        hasNextPage?: boolean
+        endCursor?: string | null
+      }
+      nodes?: Array<{
+        id?: string | null
+        location?: {
+          id?: string | null
+          name?: string | null
+          fulfillsOnlineOrders?: boolean | null
+          hasActiveInventory?: boolean | null
+          isActive?: boolean | null
+        } | null
+        quantities?: Array<{
+          name?: string | null
+          quantity?: number | null
+        }> | null
+      }>
+    } | null
+  } | null
 }
 
 export type ShopifyProductByTitle = NonNullable<

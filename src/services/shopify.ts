@@ -1,4 +1,5 @@
 import {
+  SHOPIFY_CATALOG_COLLECTIONS_QUERY,
   SHOPIFY_CATALOG_PRODUCTS_QUERY,
   SHOPIFY_CATALOG_VARIANTS_QUERY,
   SHOPIFY_DRAFT_ORDERS_QUERY,
@@ -16,6 +17,8 @@ import {
   SHOPIFY_ORDER_CAPTURE_MUTATION,
   SHOPIFY_ORDER_DETAIL_QUERY,
   SHOPIFY_ORDER_EDIT_BEGIN_MUTATION,
+  SHOPIFY_ORDER_EDIT_COMMIT_MUTATION,
+  SHOPIFY_ORDER_EDIT_SET_QUANTITY_MUTATION,
   SHOPIFY_ORDER_FULFILLMENT_ORDERS_QUERY,
   SHOPIFY_ORDER_TRANSACTIONS_PAGE_QUERY,
   SHOPIFY_ORDER_UPDATE_MUTATION,
@@ -23,6 +26,8 @@ import {
   SHOPIFY_ORDER_SUMMARIES_QUERY,
   SHOPIFY_ORDERS_WITH_LINE_ITEMS_PAGE_QUERY,
   SHOPIFY_ORDER_LINE_ITEMS_PAGE_QUERY,
+  SHOPIFY_INVENTORY_ITEM_LEVELS_QUERY,
+  SHOPIFY_LOCATIONS_QUERY,
   SHOPIFY_PRODUCTS_BY_TITLE_QUERY,
   SHOPIFY_PRODUCT_VARIANTS_PAGE_QUERY,
   SHOPIFY_PRODUCT_VARIANTS_PAGE_WITH_COST_QUERY,
@@ -37,6 +42,7 @@ import {
   SHOPIFY_VARIANT_BY_SKU_WITH_COST_QUERY,
 } from "../shopify/queries.ts"
 import type {
+  ShopifyCatalogCollectionsQuery,
   ShopifyCatalogProductsQuery,
   ShopifyCatalogVariantsQuery,
   ShopifyDraftOrderCompleteMutation,
@@ -59,12 +65,16 @@ import type {
   ShopifyGraphQLClient,
   ShopifyGraphQLResponse,
   ShopifyInitialOrderLineItem,
+  ShopifyInventoryItemLevelsQuery,
+  ShopifyLocationsQuery,
   ShopifyMutationUserError,
   ShopifyOrderCancelMutation,
   ShopifyOrderCaptureMutation,
   ShopifyOrderDetailQuery,
   ShopifyOrderDetailFulfillmentOrder,
   ShopifyOrderEditBeginMutation,
+  ShopifyOrderEditCommitMutation,
+  ShopifyOrderEditSetQuantityMutation,
   ShopifyOrderFulfillmentOrdersQuery,
   ShopifyOrderLineItemsPage,
   ShopifyOrderTransactionsPage,
@@ -160,6 +170,52 @@ export type ShopifyInventorySnapshot = {
   onHandUnits: number
 }
 
+export type ShopifyLocationSnapshot = {
+  id: string
+  name: string
+  fulfillsOnlineOrders: boolean | null
+  hasActiveInventory: boolean | null
+  isActive: boolean | null
+  address: string | null
+}
+
+export type ShopifyLocationsQuerySnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  query: string | null
+  pageInfo: {
+    hasNextPage: boolean
+    endCursor: string | null
+  }
+  locations: ShopifyLocationSnapshot[]
+}
+
+export type ShopifyInventoryLevelSnapshot = {
+  locationId: string | null
+  locationName: string | null
+  fulfillsOnlineOrders: boolean | null
+  hasActiveInventory: boolean | null
+  isActive: boolean | null
+  available: number | null
+  committed: number | null
+  incoming: number | null
+  onHand: number | null
+  reserved: number | null
+}
+
+export type ShopifyInventoryLevelsSnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  locale: string
+  storeName: string
+  timezone: string
+  productName: string
+  resolvedSkus: string[]
+  locationLevels: ShopifyInventoryLevelSnapshot[]
+}
+
 export type ShopifySalesSnapshot = {
   source: "shopify"
   retrievedAtIso: string
@@ -214,6 +270,36 @@ export type ShopifyCatalogProductsQuerySnapshot = {
     endCursor: string | null
   }
   products: ShopifyCatalogProductSnapshot[]
+}
+
+export type ShopifyCatalogCollectionRuleSnapshot = {
+  column: string | null
+  relation: string | null
+  condition: string | null
+}
+
+export type ShopifyCatalogCollectionSnapshot = {
+  id: string
+  title: string
+  handle: string | null
+  updatedAt: string | null
+  sortOrder: string | null
+  collectionType: "smart" | "manual"
+  appliedDisjunctively: boolean | null
+  rules: ShopifyCatalogCollectionRuleSnapshot[]
+}
+
+export type ShopifyCatalogCollectionsQuerySnapshot = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  query: string | null
+  pageInfo: {
+    hasNextPage: boolean
+    endCursor: string | null
+  }
+  collections: ShopifyCatalogCollectionSnapshot[]
 }
 
 export type ShopifyCatalogVariantSnapshot = {
@@ -559,6 +645,40 @@ export type ShopifyOrderEditBeginResult = {
   userErrors: ShopifyMutationUserErrorSnapshot[]
 }
 
+export type ShopifyOrderEditSetQuantityResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string | null
+  orderName: string | null
+  orderEditSessionId: string | null
+  calculatedOrderId: string | null
+  editedLineItem: ShopifyCalculatedOrderLineItemSnapshot | null
+  subtotalLineItemsQuantity: number
+  subtotalPrice: number
+  totalOutstanding: number
+  currencyCode: string
+  lineItems: ShopifyCalculatedOrderLineItemSnapshot[]
+  stagedChangeTypes: string[]
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
+export type ShopifyOrderEditCommitResult = {
+  source: "shopify"
+  retrievedAtIso: string
+  storeName: string
+  timezone: string
+  orderId: string | null
+  orderName: string | null
+  displayFinancialStatus: string | null
+  displayFulfillmentStatus: string | null
+  totalPrice: number
+  currencyCode: string
+  successMessages: string[]
+  userErrors: ShopifyMutationUserErrorSnapshot[]
+}
+
 export type ShopifyReturnCreateResult = {
   source: "shopify"
   retrievedAtIso: string
@@ -664,6 +784,19 @@ export type ShopifyOrderUpdateInput = {
 
 export type ShopifyOrderEditBeginInput = {
   orderId: string
+}
+
+export type ShopifyOrderEditSetQuantityInput = {
+  editId: string
+  lineItemId: string
+  quantity: number
+  restock?: boolean
+}
+
+export type ShopifyOrderEditCommitInput = {
+  editId: string
+  notifyCustomer?: boolean
+  staffNote?: string
 }
 
 export type ShopifyReturnCreateInput = {
@@ -1209,6 +1342,72 @@ const mapShopifyCalculatedOrderLineItems = (
     })
     .filter((lineItem): lineItem is ShopifyCalculatedOrderLineItemSnapshot => lineItem !== null)
 
+const buildShopifyOrderEditContext = (
+  calculatedOrder:
+    | {
+        id?: string | null
+        originalOrder?: {
+          id?: string | null
+          name?: string | null
+        } | null
+        subtotalLineItemsQuantity?: number | null
+        subtotalPriceSet?: {
+          presentmentMoney?: {
+            amount?: string | null
+            currencyCode?: string | null
+          } | null
+        } | null
+        totalOutstandingSet?: {
+          presentmentMoney?: {
+            amount?: string | null
+            currencyCode?: string | null
+          } | null
+        } | null
+        lineItems?: {
+          nodes?: Array<{
+            id?: string | null
+            sku?: string | null
+            title?: string | null
+            quantity?: number | null
+          }>
+        } | null
+        stagedChanges?: {
+          nodes?: Array<{
+            __typename?: string | null
+          }>
+        } | null
+      }
+    | null
+    | undefined,
+  fallbackCurrencyCode: string,
+  fallbackOrderId?: string | null,
+) => {
+  const originalOrder = calculatedOrder?.originalOrder
+
+  return {
+    orderId: trimOrNull(originalOrder?.id) ?? fallbackOrderId ?? null,
+    orderName: trimOrNull(originalOrder?.name),
+    calculatedOrderId: trimOrNull(calculatedOrder?.id),
+    subtotalLineItemsQuantity: toNumber(calculatedOrder?.subtotalLineItemsQuantity),
+    subtotalPrice: toShopifyMoneyAmount(
+      calculatedOrder?.subtotalPriceSet?.presentmentMoney?.amount,
+    ),
+    totalOutstanding: toShopifyMoneyAmount(
+      calculatedOrder?.totalOutstandingSet?.presentmentMoney?.amount,
+    ),
+    currencyCode:
+      trimOrNull(calculatedOrder?.subtotalPriceSet?.presentmentMoney?.currencyCode) ??
+      trimOrNull(calculatedOrder?.totalOutstandingSet?.presentmentMoney?.currencyCode) ??
+      fallbackCurrencyCode,
+    lineItems: mapShopifyCalculatedOrderLineItems(calculatedOrder?.lineItems?.nodes),
+    stagedChangeTypes: unique(
+      toArray<{ __typename?: string | null }>(calculatedOrder?.stagedChanges?.nodes)
+        .map(change => trimOrNull(change?.__typename))
+        .filter((change): change is string => Boolean(change)),
+    ),
+  }
+}
+
 const mapShopifyOrderTransactions = (
   transactions: Array<{
     id?: string | null
@@ -1610,6 +1809,95 @@ const mapShopifyReturnableFulfillments = (
         returnableFulfillment !== null,
     )
 
+const mapShopifyLocations = (
+  locations: Array<{
+    id?: string | null
+    name?: string | null
+    fulfillsOnlineOrders?: boolean | null
+    hasActiveInventory?: boolean | null
+    isActive?: boolean | null
+    address?: {
+      formatted?: string[] | null
+    } | null
+  }>,
+) =>
+  locations
+    .map(location => {
+      const id = trimOrNull(location?.id)
+      const name = trimOrNull(location?.name)
+      if (!id || !name) {
+        return null
+      }
+
+      const address = toArray<string>(location?.address?.formatted)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join(", ")
+
+      return {
+        id,
+        name,
+        fulfillsOnlineOrders:
+          typeof location?.fulfillsOnlineOrders === "boolean"
+            ? location.fulfillsOnlineOrders
+            : null,
+        hasActiveInventory:
+          typeof location?.hasActiveInventory === "boolean" ? location.hasActiveInventory : null,
+        isActive: typeof location?.isActive === "boolean" ? location.isActive : null,
+        address: address.length > 0 ? address : null,
+      }
+    })
+    .filter((location): location is ShopifyLocationSnapshot => location !== null)
+
+const mapShopifyCatalogCollections = (
+  collections: Array<{
+    id?: string | null
+    title?: string | null
+    handle?: string | null
+    updatedAt?: string | null
+    sortOrder?: string | null
+    ruleSet?: {
+      appliedDisjunctively?: boolean | null
+      rules?: Array<{
+        column?: string | null
+        relation?: string | null
+        condition?: string | null
+      }> | null
+    } | null
+  }>,
+) =>
+  collections
+    .map(collection => {
+      const id = trimOrNull(collection?.id)
+      const title = trimOrNull(collection?.title)
+      if (!id || !title) {
+        return null
+      }
+
+      return {
+        id,
+        title,
+        handle: trimOrNull(collection?.handle),
+        updatedAt: trimOrNull(collection?.updatedAt),
+        sortOrder: trimOrNull(collection?.sortOrder),
+        collectionType: collection?.ruleSet ? "smart" : "manual",
+        appliedDisjunctively:
+          typeof collection?.ruleSet?.appliedDisjunctively === "boolean"
+            ? collection.ruleSet.appliedDisjunctively
+            : null,
+        rules: toArray<NonNullable<NonNullable<typeof collection.ruleSet>["rules"]>[number]>(
+          collection?.ruleSet?.rules,
+        )
+          .map(rule => ({
+            column: trimOrNull(rule?.column),
+            relation: trimOrNull(rule?.relation),
+            condition: trimOrNull(rule?.condition),
+          }))
+          .filter(rule => rule.column || rule.relation || rule.condition),
+      }
+    })
+    .filter((collection): collection is ShopifyCatalogCollectionSnapshot => collection !== null)
+
 const mapShopifyCatalogProducts = (
   products: Array<{
     id?: string | null
@@ -1676,6 +1964,29 @@ const mapShopifyCatalogVariants = (
       }
     })
     .filter((variant): variant is ShopifyCatalogVariantSnapshot => variant !== null)
+
+const getInventoryLevelQuantity = (
+  quantities:
+    | Array<{
+        name?: string | null
+        quantity?: number | null
+      }>
+    | null
+    | undefined,
+  name: "available" | "committed" | "incoming" | "on_hand" | "reserved",
+) => {
+  const quantity = toArray<{
+    name?: string | null
+    quantity?: number | null
+  }>(quantities).find(entry => trimOrNull(entry?.name) === name)
+
+  return quantity && typeof quantity.quantity === "number" && Number.isFinite(quantity.quantity)
+    ? quantity.quantity
+    : null
+}
+
+const addNullableQuantity = (current: number | null, next: number | null) =>
+  current === null && next === null ? null : toNumber(current) + toNumber(next)
 
 const toShopifyMoneyString = (value: number) => {
   if (!Number.isFinite(value)) {
@@ -2889,6 +3200,52 @@ export const queryShopifyCatalogProducts = async (
   }
 }
 
+/** Queries Shopify collections with one page of lightweight collection summaries. */
+export const queryShopifyCatalogCollections = async (
+  store: ShopifyStoreConfig,
+  input?: {
+    query?: string
+    first?: number
+    after?: string
+  },
+): Promise<ShopifyCatalogCollectionsQuerySnapshot> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyCatalogCollectionsQuery>(SHOPIFY_CATALOG_COLLECTIONS_QUERY, {
+      variables: {
+        first: Math.min(Math.max(Math.round(toNumber(input?.first, 25)), 1), 50),
+        after: trimOrNull(input?.after),
+        query: trimOrNull(input?.query),
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const page = result.data?.collections
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: timeZone,
+    query: trimOrNull(input?.query),
+    pageInfo: {
+      hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+      endCursor: trimOrNull(page?.pageInfo?.endCursor),
+    },
+    collections: mapShopifyCatalogCollections(
+      toArray<
+        NonNullable<NonNullable<ShopifyCatalogCollectionsQuery["collections"]>["nodes"]>[number]
+      >(page?.nodes),
+    ),
+  }
+}
+
 /** Queries one page of Shopify variant summaries. */
 const queryShopifyCatalogVariantsPage = async (
   client: ShopifyGraphQLClient,
@@ -2968,6 +3325,55 @@ export const queryShopifyCatalogVariants = async (
       endCursor,
     },
     variants: mapShopifyCatalogVariants(variants, currencyCode),
+  }
+}
+
+/** Queries Shopify locations with one page of lightweight location summaries. */
+export const queryShopifyLocations = async (
+  store: ShopifyStoreConfig,
+  input?: {
+    query?: string
+    first?: number
+    after?: string
+    includeInactive?: boolean
+  },
+): Promise<ShopifyLocationsQuerySnapshot> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyLocationsQuery>(SHOPIFY_LOCATIONS_QUERY, {
+      variables: {
+        first: Math.min(Math.max(Math.round(toNumber(input?.first, 25)), 1), 50),
+        after: trimOrNull(input?.after),
+        query: trimOrNull(input?.query),
+        includeInactive: Boolean(input?.includeInactive),
+        includeLegacy: true,
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const timeZone = coerceShopTimeZone(shop?.ianaTimezone)
+  const page = result.data?.locations
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: timeZone,
+    query: trimOrNull(input?.query),
+    pageInfo: {
+      hasNextPage: Boolean(page?.pageInfo?.hasNextPage),
+      endCursor: trimOrNull(page?.pageInfo?.endCursor),
+    },
+    locations: mapShopifyLocations(
+      toArray<NonNullable<NonNullable<ShopifyLocationsQuery["locations"]>["nodes"]>[number]>(
+        page?.nodes,
+      ),
+    ),
   }
 }
 
@@ -3933,10 +4339,108 @@ export const beginShopifyOrderEdit = async (
 
   const payload = result.data?.orderEditBegin
   const calculatedOrder = payload?.calculatedOrder
-  const originalOrder = calculatedOrder?.originalOrder
+  const context = buildShopifyOrderEditContext(
+    calculatedOrder,
+    trimOrNull(shop?.currencyCode) ?? DEFAULT_PLUGIN_CONFIG.currency,
+    input.orderId,
+  )
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: context.orderId ?? input.orderId,
+    orderName: context.orderName,
+    orderEditSessionId: trimOrNull(payload?.orderEditSession?.id),
+    calculatedOrderId: context.calculatedOrderId,
+    subtotalLineItemsQuantity: context.subtotalLineItemsQuantity,
+    subtotalPrice: context.subtotalPrice,
+    totalOutstanding: context.totalOutstanding,
+    currencyCode: context.currencyCode,
+    lineItems: context.lineItems,
+    stagedChangeTypes: context.stagedChangeTypes,
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Sets the staged quantity for one line item in an existing Shopify order-edit session. */
+export const setShopifyOrderEditLineItemQuantity = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyOrderEditSetQuantityInput,
+): Promise<ShopifyOrderEditSetQuantityResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyOrderEditSetQuantityMutation>(SHOPIFY_ORDER_EDIT_SET_QUANTITY_MUTATION, {
+      variables: {
+        id: input.editId,
+        lineItemId: input.lineItemId,
+        quantity: Math.max(0, Math.round(input.quantity)),
+        restock: typeof input.restock === "boolean" ? input.restock : undefined,
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.orderEditSetQuantity
+  const context = buildShopifyOrderEditContext(
+    payload?.calculatedOrder,
+    trimOrNull(shop?.currencyCode) ?? DEFAULT_PLUGIN_CONFIG.currency,
+  )
+
+  return {
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    orderId: context.orderId,
+    orderName: context.orderName,
+    orderEditSessionId: trimOrNull(payload?.orderEditSession?.id),
+    calculatedOrderId: context.calculatedOrderId,
+    editedLineItem:
+      mapShopifyCalculatedOrderLineItems(
+        payload?.calculatedLineItem ? [payload.calculatedLineItem] : [],
+      )[0] ?? null,
+    subtotalLineItemsQuantity: context.subtotalLineItemsQuantity,
+    subtotalPrice: context.subtotalPrice,
+    totalOutstanding: context.totalOutstanding,
+    currencyCode: context.currencyCode,
+    lineItems: context.lineItems,
+    stagedChangeTypes: context.stagedChangeTypes,
+    userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
+  }
+}
+
+/** Commits an existing Shopify order-edit session. */
+export const commitShopifyOrderEdit = async (
+  store: ShopifyStoreConfig,
+  input: ShopifyOrderEditCommitInput,
+): Promise<ShopifyOrderEditCommitResult> => {
+  const client = await createShopifyClient(store)
+  const [shop, result] = await Promise.all([
+    fetchShopifyShopMetadata(client),
+    client.request<ShopifyOrderEditCommitMutation>(SHOPIFY_ORDER_EDIT_COMMIT_MUTATION, {
+      variables: {
+        id: input.editId,
+        notifyCustomer:
+          typeof input.notifyCustomer === "boolean" ? input.notifyCustomer : undefined,
+        staffNote: trimOrNull(input.staffNote) ?? undefined,
+      },
+    }),
+  ])
+
+  if (result.errors) {
+    throw new Error(formatShopifyErrors(result.errors))
+  }
+
+  const payload = result.data?.orderEditCommit
+  const order = payload?.order
   const currencyCode =
-    trimOrNull(calculatedOrder?.subtotalPriceSet?.presentmentMoney?.currencyCode) ??
-    trimOrNull(calculatedOrder?.totalOutstandingSet?.presentmentMoney?.currencyCode) ??
+    trimOrNull(order?.currentTotalPriceSet?.shopMoney?.currencyCode) ??
     trimOrNull(shop?.currencyCode) ??
     DEFAULT_PLUGIN_CONFIG.currency
 
@@ -3945,24 +4449,15 @@ export const beginShopifyOrderEdit = async (
     retrievedAtIso: new Date().toISOString(),
     storeName: shop?.name ?? store.name,
     timezone: coerceShopTimeZone(shop?.ianaTimezone),
-    orderId: trimOrNull(originalOrder?.id) ?? input.orderId,
-    orderName: trimOrNull(originalOrder?.name),
-    orderEditSessionId: trimOrNull(payload?.orderEditSession?.id),
-    calculatedOrderId: trimOrNull(calculatedOrder?.id),
-    subtotalLineItemsQuantity: toNumber(calculatedOrder?.subtotalLineItemsQuantity),
-    subtotalPrice: toShopifyMoneyAmount(
-      calculatedOrder?.subtotalPriceSet?.presentmentMoney?.amount,
-    ),
-    totalOutstanding: toShopifyMoneyAmount(
-      calculatedOrder?.totalOutstandingSet?.presentmentMoney?.amount,
-    ),
+    orderId: trimOrNull(order?.id),
+    orderName: trimOrNull(order?.name),
+    displayFinancialStatus: trimOrNull(order?.displayFinancialStatus),
+    displayFulfillmentStatus: trimOrNull(order?.displayFulfillmentStatus),
+    totalPrice: toShopifyMoneyAmount(order?.currentTotalPriceSet?.shopMoney?.amount),
     currencyCode,
-    lineItems: mapShopifyCalculatedOrderLineItems(calculatedOrder?.lineItems?.nodes),
-    stagedChangeTypes: unique(
-      toArray<{ __typename?: string | null }>(calculatedOrder?.stagedChanges?.nodes)
-        .map(change => trimOrNull(change?.__typename))
-        .filter((change): change is string => Boolean(change)),
-    ),
+    successMessages: toArray<string>(payload?.successMessages)
+      .map(message => message.trim())
+      .filter(Boolean),
     userErrors: mapShopifyMutationUserErrors(payload?.userErrors),
   }
 }
@@ -4262,6 +4757,163 @@ export const loadShopifyRestockSnapshotFromClient = async (
   })
 }
 
+const loadAllShopifyInventoryLevelsForItem = async (
+  client: ShopifyGraphQLClient,
+  inventoryItemId: string,
+) => {
+  const levels: NonNullable<
+    NonNullable<
+      NonNullable<ShopifyInventoryItemLevelsQuery["inventoryItem"]>["inventoryLevels"]
+    >["nodes"]
+  > = []
+  let hasNextPage = true
+  let after: string | null = null
+
+  while (hasNextPage) {
+    const result: ShopifyGraphQLResponse<ShopifyInventoryItemLevelsQuery> =
+      await client.request<ShopifyInventoryItemLevelsQuery>(SHOPIFY_INVENTORY_ITEM_LEVELS_QUERY, {
+        variables: {
+          inventoryItemId,
+          after,
+        },
+      })
+
+    if (result.errors) {
+      throw new Error(formatShopifyErrors(result.errors))
+    }
+
+    const page = result.data?.inventoryItem?.inventoryLevels
+    levels.push(
+      ...toArray<
+        NonNullable<
+          NonNullable<
+            NonNullable<ShopifyInventoryItemLevelsQuery["inventoryItem"]>["inventoryLevels"]
+          >["nodes"]
+        >[number]
+      >(page?.nodes),
+    )
+    hasNextPage = Boolean(page?.pageInfo?.hasNextPage)
+    after = page?.pageInfo?.endCursor ?? null
+  }
+
+  return levels
+}
+
+/** Resolves per-location inventory levels for a product reference using an existing Shopify client. */
+export const loadShopifyInventoryLevelsFromClient = async (
+  client: ShopifyGraphQLClient,
+  store: ShopifyStoreConfig,
+  productRef: string,
+  locale: string,
+  options?: {
+    locationIds?: string[]
+  },
+): Promise<FlowResolution<ShopifyInventoryLevelsSnapshot>> => {
+  const selection = await resolveShopifyVariantSelection(client, productRef)
+  if (selection.kind !== "ready") {
+    return selection
+  }
+
+  const shop = await fetchShopifyShopMetadata(client)
+  const inventoryItemIds = unique(
+    selection.value.variants
+      .map(variant => trimOrNull(variant?.inventoryItem?.id))
+      .filter((inventoryItemId): inventoryItemId is string => Boolean(inventoryItemId)),
+  )
+
+  if (inventoryItemIds.length === 0) {
+    throw new Error("Shopify inventory item ids were unavailable for the selected product.")
+  }
+
+  const locationFilter = new Set(
+    toArray<string>(options?.locationIds)
+      .map(locationId => locationId.trim())
+      .filter(Boolean),
+  )
+  const levelsByItem = await runInBatches(
+    inventoryItemIds,
+    SHOPIFY_VARIANT_FETCH_BATCH_SIZE,
+    inventoryItemId => loadAllShopifyInventoryLevelsForItem(client, inventoryItemId),
+  )
+  const aggregatedLevels = new Map<string, ShopifyInventoryLevelSnapshot>()
+
+  for (const level of levelsByItem.flat()) {
+    const locationId = trimOrNull(level?.location?.id)
+    if (locationFilter.size > 0 && (!locationId || !locationFilter.has(locationId))) {
+      continue
+    }
+
+    const locationName = trimOrNull(level?.location?.name)
+    const key = locationId ?? locationName ?? trimOrNull(level?.id)
+    if (!key) {
+      continue
+    }
+
+    const current: ShopifyInventoryLevelSnapshot = aggregatedLevels.get(key) ?? {
+      locationId,
+      locationName,
+      fulfillsOnlineOrders:
+        typeof level?.location?.fulfillsOnlineOrders === "boolean"
+          ? level.location.fulfillsOnlineOrders
+          : null,
+      hasActiveInventory:
+        typeof level?.location?.hasActiveInventory === "boolean"
+          ? level.location.hasActiveInventory
+          : null,
+      isActive: typeof level?.location?.isActive === "boolean" ? level.location.isActive : null,
+      available: null,
+      committed: null,
+      incoming: null,
+      onHand: null,
+      reserved: null,
+    }
+
+    current.available = addNullableQuantity(
+      current.available,
+      getInventoryLevelQuantity(level?.quantities, "available"),
+    )
+    current.committed = addNullableQuantity(
+      current.committed,
+      getInventoryLevelQuantity(level?.quantities, "committed"),
+    )
+    current.incoming = addNullableQuantity(
+      current.incoming,
+      getInventoryLevelQuantity(level?.quantities, "incoming"),
+    )
+    current.onHand = addNullableQuantity(
+      current.onHand,
+      getInventoryLevelQuantity(level?.quantities, "on_hand"),
+    )
+    current.reserved = addNullableQuantity(
+      current.reserved,
+      getInventoryLevelQuantity(level?.quantities, "reserved"),
+    )
+    aggregatedLevels.set(key, current)
+  }
+
+  const firstVariant = selection.value.variants[0]
+
+  return ready({
+    source: "shopify",
+    retrievedAtIso: new Date().toISOString(),
+    locale,
+    storeName: shop?.name ?? store.name,
+    timezone: coerceShopTimeZone(shop?.ianaTimezone),
+    productName:
+      firstVariant?.product?.title ??
+      firstVariant?.displayName ??
+      firstVariant?.sku ??
+      selection.value.resolvedSkus[0] ??
+      productRef,
+    resolvedSkus: selection.value.resolvedSkus,
+    locationLevels: [...aggregatedLevels.values()].sort((left, right) => {
+      const leftLabel = left.locationName ?? left.locationId ?? ""
+      const rightLabel = right.locationName ?? right.locationId ?? ""
+      return leftLabel.localeCompare(rightLabel)
+    }),
+  })
+}
+
 /** Resolves current inventory for a product reference using an existing Shopify client. */
 export const loadShopifyInventorySnapshotFromClient = async (
   client: ShopifyGraphQLClient,
@@ -4303,6 +4955,19 @@ export const loadShopifyInventorySnapshot = async (
 ): Promise<FlowResolution<ShopifyInventorySnapshot>> => {
   const client = await createShopifyClient(store)
   return loadShopifyInventorySnapshotFromClient(client, store, productRef, locale)
+}
+
+/** Resolves per-location inventory levels for a product reference by creating a Shopify client on demand. */
+export const loadShopifyInventoryLevels = async (
+  store: ShopifyStoreConfig,
+  productRef: string,
+  locale: string,
+  options?: {
+    locationIds?: string[]
+  },
+): Promise<FlowResolution<ShopifyInventoryLevelsSnapshot>> => {
+  const client = await createShopifyClient(store)
+  return loadShopifyInventoryLevelsFromClient(client, store, productRef, locale, options)
 }
 
 /** Loads inventory and pricing details for a product reference using an existing Shopify client. */

@@ -4,6 +4,7 @@ import {
   beginShopifyOrderEdit,
   cancelShopifyOrder,
   captureShopifyOrder,
+  commitShopifyOrderEdit,
   completeShopifyDraftOrder,
   createShopifyDraftOrder,
   createShopifyFulfillment,
@@ -11,17 +12,21 @@ import {
   createShopifyReturn,
   getShopifyOrder,
   holdShopifyFulfillmentOrder,
+  loadShopifyInventoryLevels,
   moveShopifyFulfillmentOrder,
+  queryShopifyCatalogCollections,
   queryShopifyDraftOrders,
   queryShopifyFulfillmentOrders,
   queryShopifyCatalogProducts,
   queryShopifyCatalogVariants,
+  queryShopifyLocations,
   loadShopifyStoreOverview,
   queryShopifyReturnableFulfillments,
   queryShopifyOrders,
   releaseHoldShopifyFulfillmentOrder,
   resolveStoreOverviewWindow,
   sendShopifyDraftOrderInvoice,
+  setShopifyOrderEditLineItemQuantity,
   updateShopifyDraftOrder,
   updateShopifyOrder,
 } from "./shopify.ts"
@@ -719,6 +724,101 @@ describe("queryShopifyCatalogProducts", () => {
   })
 })
 
+describe("queryShopifyCatalogCollections", () => {
+  it("queries one page of Shopify collection summaries", async () => {
+    process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
+
+    const fetchMock = mock.method(
+      globalThis,
+      "fetch",
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getRequestUrl(input)
+        if (url === "https://example.myshopify.com/admin/oauth/access_token") {
+          return createJsonResponse({
+            access_token: "test-access-token",
+          })
+        }
+
+        if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {
+          const query = getGraphQLQuery(init)
+          const variables = getGraphQLVariables(init)
+
+          if (query.includes("SellerHealthShop")) {
+            return createJsonResponse({
+              data: {
+                shop: {
+                  name: "Test Shopify Store",
+                  currencyCode: "USD",
+                  ianaTimezone: "America/New_York",
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerCatalogCollections")) {
+            assert.deepEqual(variables, {
+              first: 5,
+              after: "collection-cursor-0",
+              query: "title:summer",
+            })
+
+            return createJsonResponse({
+              data: {
+                collections: {
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: "collection-cursor-1",
+                  },
+                  nodes: [
+                    {
+                      id: "gid://shopify/Collection/1",
+                      title: "Summer Sale",
+                      handle: "summer-sale",
+                      updatedAt: "2026-03-18T08:00:00.000Z",
+                      sortOrder: "BEST_SELLING",
+                      ruleSet: {
+                        appliedDisjunctively: false,
+                        rules: [
+                          {
+                            column: "TITLE",
+                            relation: "CONTAINS",
+                            condition: "summer",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            })
+          }
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      },
+    )
+
+    try {
+      const snapshot = await queryShopifyCatalogCollections(TEST_SHOPIFY_STORE, {
+        query: "title:summer",
+        first: 5,
+        after: "collection-cursor-0",
+      })
+
+      assert.equal(snapshot.storeName, "Test Shopify Store")
+      assert.equal(snapshot.query, "title:summer")
+      assert.equal(snapshot.collections.length, 1)
+      assert.equal(snapshot.collections[0]?.title, "Summer Sale")
+      assert.equal(snapshot.collections[0]?.collectionType, "smart")
+      assert.equal(snapshot.collections[0]?.rules[0]?.condition, "summer")
+      assert.equal(snapshot.pageInfo.endCursor, "collection-cursor-1")
+    } finally {
+      fetchMock.mock.restore()
+      delete process.env[TEST_SHOPIFY_SECRET_ENV]
+    }
+  })
+})
+
 describe("queryShopifyCatalogVariants", () => {
   it("queries one page of Shopify variant summaries and applies the shop currency fallback", async () => {
     process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
@@ -938,6 +1038,259 @@ describe("queryShopifyCatalogVariants", () => {
       )
       assert.equal(snapshot.pageInfo.hasNextPage, false)
       assert.equal(snapshot.pageInfo.endCursor, "variant-cursor-2")
+    } finally {
+      fetchMock.mock.restore()
+      delete process.env[TEST_SHOPIFY_SECRET_ENV]
+    }
+  })
+})
+
+describe("queryShopifyLocations", () => {
+  it("queries one page of Shopify locations with includeInactive support and legacy locations enabled", async () => {
+    process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
+
+    const fetchMock = mock.method(
+      globalThis,
+      "fetch",
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getRequestUrl(input)
+        if (url === "https://example.myshopify.com/admin/oauth/access_token") {
+          return createJsonResponse({
+            access_token: "test-access-token",
+          })
+        }
+
+        if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {
+          const query = getGraphQLQuery(init)
+          const variables = getGraphQLVariables(init)
+
+          if (query.includes("SellerHealthShop")) {
+            return createJsonResponse({
+              data: {
+                shop: {
+                  name: "Test Shopify Store",
+                  currencyCode: "USD",
+                  ianaTimezone: "America/New_York",
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerLocations")) {
+            assert.deepEqual(variables, {
+              first: 10,
+              after: "location-cursor-0",
+              query: "name:warehouse",
+              includeInactive: true,
+              includeLegacy: true,
+            })
+
+            return createJsonResponse({
+              data: {
+                locations: {
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: "location-cursor-1",
+                  },
+                  nodes: [
+                    {
+                      id: "gid://shopify/Location/1",
+                      name: "Main Warehouse",
+                      fulfillsOnlineOrders: true,
+                      hasActiveInventory: true,
+                      isActive: true,
+                      address: {
+                        formatted: ["1 Main St", "New York, NY 10001", "United States"],
+                      },
+                    },
+                  ],
+                },
+              },
+            })
+          }
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      },
+    )
+
+    try {
+      const snapshot = await queryShopifyLocations(TEST_SHOPIFY_STORE, {
+        query: "name:warehouse",
+        first: 10,
+        after: "location-cursor-0",
+        includeInactive: true,
+      })
+
+      assert.equal(snapshot.storeName, "Test Shopify Store")
+      assert.equal(snapshot.locations.length, 1)
+      assert.equal(snapshot.locations[0]?.name, "Main Warehouse")
+      assert.equal(snapshot.locations[0]?.address, "1 Main St, New York, NY 10001, United States")
+      assert.equal(snapshot.pageInfo.endCursor, "location-cursor-1")
+    } finally {
+      fetchMock.mock.restore()
+      delete process.env[TEST_SHOPIFY_SECRET_ENV]
+    }
+  })
+})
+
+describe("loadShopifyInventoryLevels", () => {
+  it("loads per-location inventory levels and applies location filters", async () => {
+    process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
+
+    const fetchMock = mock.method(
+      globalThis,
+      "fetch",
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getRequestUrl(input)
+        if (url === "https://example.myshopify.com/admin/oauth/access_token") {
+          return createJsonResponse({
+            access_token: "test-access-token",
+          })
+        }
+
+        if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {
+          const query = getGraphQLQuery(init)
+          const variables = getGraphQLVariables(init)
+
+          if (query.includes("SellerVariantBySku(")) {
+            assert.deepEqual(variables, {
+              skuQuery: 'sku:"WM-01"',
+              after: null,
+            })
+
+            return createJsonResponse({
+              data: {
+                productVariants: {
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: null,
+                  },
+                  nodes: [
+                    {
+                      id: "gid://shopify/ProductVariant/1",
+                      sku: "WM-01",
+                      displayName: "Short sleeve t-shirt / Blue / M",
+                      price: "39.00",
+                      inventoryQuantity: 29,
+                      inventoryItem: {
+                        id: "gid://shopify/InventoryItem/1",
+                      },
+                      product: {
+                        id: "gid://shopify/Product/1",
+                        title: "Short sleeve t-shirt",
+                      },
+                    },
+                  ],
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerProductsByTitle")) {
+            return createJsonResponse({
+              data: {
+                products: {
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: null,
+                  },
+                  nodes: [],
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerHealthShop")) {
+            return createJsonResponse({
+              data: {
+                shop: {
+                  name: "Test Shopify Store",
+                  currencyCode: "USD",
+                  ianaTimezone: "America/New_York",
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerInventoryItemLevels")) {
+            assert.deepEqual(variables, {
+              inventoryItemId: "gid://shopify/InventoryItem/1",
+              after: null,
+            })
+
+            return createJsonResponse({
+              data: {
+                inventoryItem: {
+                  id: "gid://shopify/InventoryItem/1",
+                  inventoryLevels: {
+                    pageInfo: {
+                      hasNextPage: false,
+                      endCursor: null,
+                    },
+                    nodes: [
+                      {
+                        id: "gid://shopify/InventoryLevel/1",
+                        location: {
+                          id: "gid://shopify/Location/1",
+                          name: "Main Warehouse",
+                          fulfillsOnlineOrders: true,
+                          hasActiveInventory: true,
+                          isActive: true,
+                        },
+                        quantities: [
+                          { name: "available", quantity: 20 },
+                          { name: "committed", quantity: 3 },
+                          { name: "incoming", quantity: 5 },
+                          { name: "on_hand", quantity: 28 },
+                          { name: "reserved", quantity: 0 },
+                        ],
+                      },
+                      {
+                        id: "gid://shopify/InventoryLevel/2",
+                        location: {
+                          id: "gid://shopify/Location/2",
+                          name: "Overflow Warehouse",
+                          fulfillsOnlineOrders: false,
+                          hasActiveInventory: true,
+                          isActive: true,
+                        },
+                        quantities: [
+                          { name: "available", quantity: 9 },
+                          { name: "committed", quantity: 1 },
+                          { name: "incoming", quantity: 0 },
+                          { name: "on_hand", quantity: 10 },
+                          { name: "reserved", quantity: 0 },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+            })
+          }
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      },
+    )
+
+    try {
+      const snapshot = await loadShopifyInventoryLevels(TEST_SHOPIFY_STORE, "WM-01", "en-US", {
+        locationIds: ["gid://shopify/Location/1"],
+      })
+
+      assert.equal(snapshot.kind, "ready")
+      if (snapshot.kind !== "ready") {
+        assert.fail("Expected inventory levels to resolve")
+      }
+
+      assert.equal(snapshot.value.productName, "Short sleeve t-shirt")
+      assert.deepEqual(snapshot.value.resolvedSkus, ["WM-01"])
+      assert.equal(snapshot.value.locationLevels.length, 1)
+      assert.equal(snapshot.value.locationLevels[0]?.locationName, "Main Warehouse")
+      assert.equal(snapshot.value.locationLevels[0]?.available, 20)
+      assert.equal(snapshot.value.locationLevels[0]?.onHand, 28)
     } finally {
       fetchMock.mock.restore()
       delete process.env[TEST_SHOPIFY_SECRET_ENV]
@@ -3378,6 +3731,346 @@ describe("beginShopifyOrderEdit", () => {
       assert.equal(result.lineItems[0]?.sku, "WM-01")
       assert.equal(result.subtotalPrice, 123.45)
       assert.equal(result.stagedChangeTypes.length, 0)
+    } finally {
+      fetchMock.mock.restore()
+      delete process.env[TEST_SHOPIFY_SECRET_ENV]
+    }
+  })
+})
+
+describe("setShopifyOrderEditLineItemQuantity", () => {
+  it("updates the staged quantity for a calculated line item", async () => {
+    process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
+
+    const fetchMock = mock.method(
+      globalThis,
+      "fetch",
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getRequestUrl(input)
+        if (url === "https://example.myshopify.com/admin/oauth/access_token") {
+          return createJsonResponse({
+            access_token: "test-access-token",
+          })
+        }
+
+        if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {
+          const query = getGraphQLQuery(init)
+          const variables = getGraphQLVariables(init)
+
+          if (query.includes("SellerHealthShop")) {
+            return createJsonResponse({
+              data: {
+                shop: {
+                  name: "Test Shopify Store",
+                  currencyCode: "USD",
+                  ianaTimezone: "America/New_York",
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerOrderEditSetQuantity")) {
+            assert.deepEqual(variables, {
+              id: "gid://shopify/CalculatedOrder/1",
+              lineItemId: "gid://shopify/CalculatedLineItem/1",
+              quantity: 2,
+              restock: true,
+            })
+
+            return createJsonResponse({
+              data: {
+                orderEditSetQuantity: {
+                  calculatedLineItem: {
+                    id: "gid://shopify/CalculatedLineItem/1",
+                    sku: "WM-01",
+                    title: "Short sleeve t-shirt",
+                    quantity: 2,
+                  },
+                  calculatedOrder: {
+                    id: "gid://shopify/CalculatedOrder/1",
+                    originalOrder: {
+                      id: "gid://shopify/Order/1001",
+                      name: "#1001",
+                    },
+                    subtotalLineItemsQuantity: 2,
+                    subtotalPriceSet: {
+                      presentmentMoney: {
+                        amount: "82.00",
+                        currencyCode: "USD",
+                      },
+                    },
+                    totalOutstandingSet: {
+                      presentmentMoney: {
+                        amount: "0.00",
+                        currencyCode: "USD",
+                      },
+                    },
+                    lineItems: {
+                      nodes: [
+                        {
+                          id: "gid://shopify/CalculatedLineItem/1",
+                          sku: "WM-01",
+                          title: "Short sleeve t-shirt",
+                          quantity: 2,
+                        },
+                      ],
+                    },
+                    stagedChanges: {
+                      nodes: [
+                        {
+                          __typename: "OrderStagedChangeSetQuantity",
+                        },
+                      ],
+                    },
+                  },
+                  orderEditSession: {
+                    id: "gid://shopify/OrderEditSession/1",
+                  },
+                  userErrors: [],
+                },
+              },
+            })
+          }
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      },
+    )
+
+    try {
+      const result = await setShopifyOrderEditLineItemQuantity(TEST_SHOPIFY_STORE, {
+        editId: "gid://shopify/CalculatedOrder/1",
+        lineItemId: "gid://shopify/CalculatedLineItem/1",
+        quantity: 2,
+        restock: true,
+      })
+
+      assert.equal(result.orderId, "gid://shopify/Order/1001")
+      assert.equal(result.orderEditSessionId, "gid://shopify/OrderEditSession/1")
+      assert.equal(result.editedLineItem?.quantity, 2)
+      assert.equal(result.subtotalPrice, 82)
+      assert.deepEqual(result.stagedChangeTypes, ["OrderStagedChangeSetQuantity"])
+    } finally {
+      fetchMock.mock.restore()
+      delete process.env[TEST_SHOPIFY_SECRET_ENV]
+    }
+  })
+
+  it("keeps orderId null when Shopify returns user errors without original order context", async () => {
+    process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
+
+    const fetchMock = mock.method(
+      globalThis,
+      "fetch",
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getRequestUrl(input)
+        if (url === "https://example.myshopify.com/admin/oauth/access_token") {
+          return createJsonResponse({
+            access_token: "test-access-token",
+          })
+        }
+
+        if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {
+          const query = getGraphQLQuery(init)
+
+          if (query.includes("SellerHealthShop")) {
+            return createJsonResponse({
+              data: {
+                shop: {
+                  name: "Test Shopify Store",
+                  currencyCode: "USD",
+                  ianaTimezone: "America/New_York",
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerOrderEditSetQuantity")) {
+            return createJsonResponse({
+              data: {
+                orderEditSetQuantity: {
+                  calculatedLineItem: null,
+                  calculatedOrder: null,
+                  orderEditSession: {
+                    id: "gid://shopify/OrderEditSession/1",
+                  },
+                  userErrors: [
+                    {
+                      field: ["quantity"],
+                      message: "Quantity exceeds editable limit.",
+                    },
+                  ],
+                },
+              },
+            })
+          }
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      },
+    )
+
+    try {
+      const result = await setShopifyOrderEditLineItemQuantity(TEST_SHOPIFY_STORE, {
+        editId: "gid://shopify/CalculatedOrder/1",
+        lineItemId: "gid://shopify/CalculatedLineItem/1",
+        quantity: 99,
+      })
+
+      assert.equal(result.orderId, null)
+      assert.equal(result.currencyCode, "USD")
+      assert.equal(result.userErrors[0]?.message, "Quantity exceeds editable limit.")
+    } finally {
+      fetchMock.mock.restore()
+      delete process.env[TEST_SHOPIFY_SECRET_ENV]
+    }
+  })
+})
+
+describe("commitShopifyOrderEdit", () => {
+  it("commits a Shopify order-edit session using shop-currency totals", async () => {
+    process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
+
+    const fetchMock = mock.method(
+      globalThis,
+      "fetch",
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getRequestUrl(input)
+        if (url === "https://example.myshopify.com/admin/oauth/access_token") {
+          return createJsonResponse({
+            access_token: "test-access-token",
+          })
+        }
+
+        if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {
+          const query = getGraphQLQuery(init)
+          const variables = getGraphQLVariables(init)
+
+          if (query.includes("SellerHealthShop")) {
+            return createJsonResponse({
+              data: {
+                shop: {
+                  name: "Test Shopify Store",
+                  currencyCode: "USD",
+                  ianaTimezone: "America/New_York",
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerOrderEditCommit")) {
+            assert.deepEqual(variables, {
+              id: "gid://shopify/CalculatedOrder/1",
+              notifyCustomer: true,
+              staffNote: "approved by ops",
+            })
+
+            return createJsonResponse({
+              data: {
+                orderEditCommit: {
+                  order: {
+                    id: "gid://shopify/Order/1001",
+                    name: "#1001",
+                    displayFinancialStatus: "PAID",
+                    displayFulfillmentStatus: "UNFULFILLED",
+                    currentTotalPriceSet: {
+                      shopMoney: {
+                        amount: "95.00",
+                        currencyCode: "USD",
+                      },
+                    },
+                  },
+                  successMessages: ["Order edit committed"],
+                  userErrors: [],
+                },
+              },
+            })
+          }
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      },
+    )
+
+    try {
+      const result = await commitShopifyOrderEdit(TEST_SHOPIFY_STORE, {
+        editId: "gid://shopify/CalculatedOrder/1",
+        notifyCustomer: true,
+        staffNote: "approved by ops",
+      })
+
+      assert.equal(result.orderId, "gid://shopify/Order/1001")
+      assert.equal(result.orderName, "#1001")
+      assert.equal(result.totalPrice, 95)
+      assert.equal(result.currencyCode, "USD")
+      assert.deepEqual(result.successMessages, ["Order edit committed"])
+      assert.equal(result.userErrors.length, 0)
+    } finally {
+      fetchMock.mock.restore()
+      delete process.env[TEST_SHOPIFY_SECRET_ENV]
+    }
+  })
+
+  it("keeps orderId null when Shopify returns commit user errors without an order payload", async () => {
+    process.env[TEST_SHOPIFY_SECRET_ENV] = "test-secret"
+
+    const fetchMock = mock.method(
+      globalThis,
+      "fetch",
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = getRequestUrl(input)
+        if (url === "https://example.myshopify.com/admin/oauth/access_token") {
+          return createJsonResponse({
+            access_token: "test-access-token",
+          })
+        }
+
+        if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {
+          const query = getGraphQLQuery(init)
+
+          if (query.includes("SellerHealthShop")) {
+            return createJsonResponse({
+              data: {
+                shop: {
+                  name: "Test Shopify Store",
+                  currencyCode: "USD",
+                  ianaTimezone: "America/New_York",
+                },
+              },
+            })
+          }
+
+          if (query.includes("SellerOrderEditCommit")) {
+            return createJsonResponse({
+              data: {
+                orderEditCommit: {
+                  order: null,
+                  successMessages: [],
+                  userErrors: [
+                    {
+                      field: ["id"],
+                      message: "Order edit session is no longer valid.",
+                    },
+                  ],
+                },
+              },
+            })
+          }
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      },
+    )
+
+    try {
+      const result = await commitShopifyOrderEdit(TEST_SHOPIFY_STORE, {
+        editId: "gid://shopify/OrderEditSession/1",
+      })
+
+      assert.equal(result.orderId, null)
+      assert.equal(result.totalPrice, 0)
+      assert.equal(result.currencyCode, "USD")
+      assert.equal(result.userErrors[0]?.message, "Order edit session is no longer valid.")
     } finally {
       fetchMock.mock.restore()
       delete process.env[TEST_SHOPIFY_SECRET_ENV]
