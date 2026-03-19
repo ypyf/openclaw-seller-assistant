@@ -2,7 +2,7 @@
   "id": "seller-assistant",
   "name": "Seller Assistant",
   "description": "Generic seller platform runtime with profile discovery, official-doc search, and read-only JavaScript execution.",
-  "version": "2026.3.19",
+  "version": "2026.3.20",
   "skills": ["./skills"],
   "configSchema": {
     "type": "object",
