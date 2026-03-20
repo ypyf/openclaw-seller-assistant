@@ -40,14 +40,10 @@ const createDependencies = (): SellerToolDependencies => {
       },
     ],
     validateProfile: () => ({ ok: true as const }),
-    summarizeProfile: () => ({
+    describeProfile: () => ({
       connection: {
         storeDomain: "example.myshopify.com",
         apiVersion: "2026-01",
-      },
-      capabilities: {
-        search: true,
-        execute: ["read" as const, "write" as const],
       },
     }),
     async createExecutorContext() {
@@ -146,16 +142,119 @@ describe("registerSellerTools", () => {
     })) as {
       details: {
         profiles: Array<{
+          status: string
           connection: Record<string, unknown>
+          authorization: {
+            resources: Record<string, string[]>
+            scopes: string[]
+            executeModes: string[]
+          }
         }>
       }
     }
 
+    assert.equal(result.details.profiles[0]?.status, "ready")
     assert.deepEqual(result.details.profiles[0]?.connection, {
       storeDomain: "example.myshopify.com",
       apiVersion: "2026-01",
     })
+    assert.deepEqual(result.details.profiles[0]?.authorization.resources, {
+      "*": ["read"],
+      product: ["write"],
+    })
+    assert.deepEqual(result.details.profiles[0]?.authorization.scopes, ["*.read", "product.write"])
+    assert.deepEqual(result.details.profiles[0]?.authorization.executeModes, ["read", "write"])
     assert.equal("clientSecretEnv" in (result.details.profiles[0]?.connection ?? {}), false)
+  })
+
+  it("returns invalid configured profiles with validation details instead of hiding them", async () => {
+    const config = createPluginConfig()
+    config.profiles[0] = {
+      ...config.profiles[0],
+      connection: {
+        storeDomain: "example.myshopify.com",
+      },
+    }
+
+    const dependencies = createDependencies()
+    const originalFindProvider = dependencies.findProvider
+    dependencies.findProvider = providerName =>
+      providerName === "shopify"
+        ? {
+            ...originalFindProvider("shopify")!,
+            validateProfile: profile =>
+              "clientId" in profile.connection && "clientSecretEnv" in profile.connection
+                ? { ok: true as const }
+                : {
+                    ok: false as const,
+                    reason: "Shopify profiles require storeDomain, clientId, and clientSecretEnv.",
+                  },
+          }
+        : undefined
+
+    const { api, registrations } = createToolApi()
+    registerSellerTools(api, config, dependencies)
+
+    const sellerProfiles = registrations.find(tool => tool.name === "seller_profiles")
+
+    const result = (await sellerProfiles?.execute("tool-invalid-profile", {
+      operation: "get",
+      profileId: "shopify-main",
+    })) as {
+      content: Array<{ text: string }>
+      details: {
+        profile: {
+          status: string
+          statusReason?: string
+          authorization: {
+            resources: Record<string, string[]>
+          }
+        }
+      }
+    }
+
+    assert.equal(result.details.profile.status, "invalid")
+    assert.match(
+      result.details.profile.statusReason ?? "",
+      /require storeDomain, clientId, and clientSecretEnv/i,
+    )
+    assert.match(result.content[0]?.text ?? "", /Status: invalid/i)
+    assert.deepEqual(result.details.profile.authorization.resources, {
+      "*": ["read"],
+      product: ["write"],
+    })
+  })
+
+  it("returns unsupported configured profiles with status details", async () => {
+    const config = createPluginConfig()
+    config.profiles[0] = {
+      ...config.profiles[0],
+      provider: "unknown-provider",
+    }
+
+    const { api, registrations } = createToolApi()
+    registerSellerTools(api, config, createDependencies())
+
+    const sellerProfiles = registrations.find(tool => tool.name === "seller_profiles")
+
+    const result = (await sellerProfiles?.execute("tool-unsupported-profile", {
+      operation: "get",
+      profileId: "shopify-main",
+    })) as {
+      content: Array<{ text: string }>
+      details: {
+        profile: {
+          status: string
+          docsUrls: string[]
+          connection: Record<string, unknown>
+        }
+      }
+    }
+
+    assert.equal(result.details.profile.status, "unsupported")
+    assert.deepEqual(result.details.profile.docsUrls, [])
+    assert.deepEqual(result.details.profile.connection, {})
+    assert.match(result.content[0]?.text ?? "", /Provider: unknown-provider/i)
   })
 
   it("returns not found for an unknown profile id", async () => {
@@ -222,14 +321,10 @@ describe("registerSellerTools", () => {
       providerName === "shopify"
         ? {
             ...originalFindProvider("shopify")!,
-            summarizeProfile: () => ({
+            describeProfile: () => ({
               connection: {
                 storeDomain: "example.myshopify.com",
                 apiVersion: "2026-01",
-              },
-              capabilities: {
-                search: true,
-                execute: ["read" as const],
               },
             }),
           }
@@ -249,5 +344,48 @@ describe("registerSellerTools", () => {
     }
 
     assert.match(result.content[0]?.text ?? "", /does not allow write execution/i)
+  })
+
+  it("does not allow write execution after mutating profile inspection authorization", async () => {
+    const config = createPluginConfig()
+    config.profiles[0] = {
+      ...config.profiles[0],
+      policy: toProfilePolicy({
+        "*": ["read"],
+      }),
+    }
+
+    const { api, registrations } = createToolApi()
+    registerSellerTools(api, config, createDependencies())
+
+    const sellerProfiles = registrations.find(tool => tool.name === "seller_profiles")
+    const sellerExecute = registrations.find(tool => tool.name === "seller_execute")
+
+    const profilesResult = (await sellerProfiles?.execute("tool-inspect-mutate", {
+      operation: "get",
+      profileId: "shopify-main",
+    })) as {
+      details: {
+        profile: {
+          authorization: {
+            scopes: string[]
+            resources: Record<string, string[]>
+          }
+        }
+      }
+    }
+
+    profilesResult.details.profile.authorization.scopes.push("*.write")
+    profilesResult.details.profile.authorization.resources["*"].push("write")
+
+    const executeResult = (await sellerExecute?.execute("tool-write-denied-mutation", {
+      runtime: "javascript",
+      mode: "write",
+      script: 'return "ok"',
+    })) as {
+      content: Array<{ text: string }>
+    }
+
+    assert.match(executeResult.content[0]?.text ?? "", /does not allow write execution/i)
   })
 })

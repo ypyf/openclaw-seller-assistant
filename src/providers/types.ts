@@ -2,12 +2,8 @@ import type { ProviderProfile } from "../config.ts"
 
 export type ExecutionMode = "read" | "write"
 
-export type ProviderPublicProfileSummary = {
+export type ProviderPublicProfileDescription = {
   connection: Record<string, unknown>
-  capabilities: {
-    search: boolean
-    execute: ExecutionMode[]
-  }
 }
 
 export type ProviderDocumentationNote = {
@@ -79,7 +75,7 @@ export type Provider = {
   defaultDocs: ProviderDocumentationSource[]
   curatedNotes: ProviderDocumentationNote[]
   validateProfile: (profile: ProviderProfile) => { ok: true } | { ok: false; reason: string }
-  summarizeProfile: (profile: ProviderProfile) => ProviderPublicProfileSummary
+  describeProfile: (profile: ProviderProfile) => ProviderPublicProfileDescription
   createExecutorContext: (
     profile: ProviderProfile,
     signal: AbortSignal,

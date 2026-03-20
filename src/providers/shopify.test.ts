@@ -57,6 +57,20 @@ afterEach(() => {
 })
 
 describe("shopifyProvider", () => {
+  it("describes safe connection fields for invalid profiles", () => {
+    const description = shopifyProvider.describeProfile({
+      ...createProfile(),
+      connection: {
+        storeDomain: "example.myshopify.com",
+      },
+    })
+
+    assert.deepEqual(description.connection, {
+      storeDomain: "example.myshopify.com",
+      apiVersion: "2026-01",
+    })
+  })
+
   it("creates a read-only executor context with graphql and request helpers", async () => {
     fetchMock = mockShopifyFetch(async (url, init) => {
       if (url === "https://example.myshopify.com/admin/api/2026-01/graphql.json") {

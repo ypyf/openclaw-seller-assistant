@@ -2,7 +2,7 @@
 
 `seller-assistant` is an OpenClaw plugin that provides a small runtime for seller-platform API work:
 
-- `seller_profiles`: inspect configured provider profiles and their safe connection summary
+- `seller_profiles`: inspect configured provider profiles, their validation status, and their effective local authorization
 - `seller_search`: search provider notes plus official platform documentation
 - `seller_execute`: run JavaScript against a configured profile through provider helpers
 
@@ -125,7 +125,11 @@ For Shopify requests to succeed, the Shopify app behind the profile must also ha
 
 ### `seller_profiles`
 
-Use this tool to list profiles or inspect one profile:
+Use this tool to list profiles or inspect one profile.
+
+It reports configured profiles, safe connection details, local validation status, and the effective local authorization shape for each profile.
+
+Requests:
 
 ```json
 {
@@ -211,6 +215,7 @@ For more examples, see [Usage Examples](./docs/usage-examples.md).
 ## Notes
 
 - `seller_profiles` does not return secret values or environment variable names.
+- `seller_profiles` returns configured profiles even when validation fails, with status details for troubleshooting.
 - `seller_search` prefers provider-curated notes before official doc chunks.
 - `seller_execute` returns the script, request summary, logs, structured result, and raw response excerpts for downstream analysis.
 - local `policy.resources` scopes gate operations before provider requests are sent.

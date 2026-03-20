@@ -10,7 +10,7 @@ import type {
   ProviderHttpResponse,
   ProviderRequestLogEntry,
 } from "./types.ts"
-import { allowsScope, inferExecuteModes, type Scope } from "../policy.ts"
+import { allowsScope, type Scope } from "../policy.ts"
 
 type ShopifyConnection = {
   storeDomain: string
@@ -96,6 +96,11 @@ const curatedNotes: ProviderDocumentationNote[] = [
 
 const readString = (value: unknown) =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+
+const describeShopifyConnection = (profile: ProviderProfile) => ({
+  storeDomain: readString(profile.connection.storeDomain) ?? "unknown",
+  apiVersion: readString(profile.connection.apiVersion) ?? DEFAULT_SHOPIFY_API_VERSION,
+})
 
 const toShopifyConnection = (profile: ProviderProfile): ShopifyConnection | undefined => {
   const storeDomain = readString(profile.connection.storeDomain)
@@ -821,17 +826,9 @@ export const shopifyProvider: Provider = {
           reason: "Shopify profiles require storeDomain, clientId, and clientSecretEnv.",
         }
   },
-  summarizeProfile(profile) {
-    const connection = toShopifyConnection(profile)
+  describeProfile(profile) {
     return {
-      connection: {
-        storeDomain: connection?.storeDomain ?? "unknown",
-        apiVersion: connection?.apiVersion ?? DEFAULT_SHOPIFY_API_VERSION,
-      },
-      capabilities: {
-        search: true,
-        execute: inferExecuteModes(profile.policy.scopes),
-      },
+      connection: describeShopifyConnection(profile),
     }
   },
   createExecutorContext,

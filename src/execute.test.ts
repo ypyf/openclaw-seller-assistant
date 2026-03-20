@@ -10,13 +10,9 @@ const testProvider: Provider = {
   defaultDocs: [],
   curatedNotes: [],
   validateProfile: () => ({ ok: true }),
-  summarizeProfile: () => ({
+  describeProfile: () => ({
     connection: {
       storeDomain: "example.myshopify.com",
-    },
-    capabilities: {
-      search: true,
-      execute: ["read", "write"],
     },
   }),
   async createExecutorContext(_profile, _signal, input) {

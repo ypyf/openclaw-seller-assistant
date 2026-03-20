@@ -5,6 +5,13 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
 import { executeScript } from "./execute.ts"
 import { findConfiguredProfile, type PluginConfig, type ProviderProfile } from "./config.ts"
 import { searchDocumentation } from "./docs.ts"
+import {
+  formatProfileInspection,
+  inspectConfiguredProfiles,
+  resolveProfileInspection,
+  type SellerProfileInspection,
+} from "./profile-inspection.ts"
+import { inferExecuteModes } from "./policy.ts"
 import { findProvider, getDocumentationSources, listProviders } from "./providers/index.ts"
 import type { ExecutionMode, Provider, ProviderSearchDocument } from "./providers/types.ts"
 import { textResult, textResultWithDetails } from "./utils.ts"
@@ -69,19 +76,6 @@ const DEFAULT_SELLER_TOOL_DEPENDENCIES: SellerToolDependencies = {
   executeScript,
 }
 
-type SellerProfileSummary = {
-  id: string
-  name: string
-  provider: string
-  default: boolean
-  docsUrls: string[]
-  connection: Record<string, unknown>
-  capabilities: {
-    search: boolean
-    execute: ExecutionMode[]
-  }
-}
-
 const validateParams = <T>(schema: TSchema, value: unknown): T | undefined =>
   Value.Check(schema, value) ? (value as T) : undefined
 
@@ -89,60 +83,6 @@ const resolveProviderForProfile = (
   dependencies: SellerToolDependencies,
   profile: ProviderProfile,
 ): Provider | undefined => dependencies.findProvider(profile.provider)
-
-const listProfileSummaries = (
-  config: PluginConfig,
-  dependencies: SellerToolDependencies,
-): SellerProfileSummary[] =>
-  config.profiles.flatMap(profile => {
-    const provider = resolveProviderForProfile(dependencies, profile)
-    if (!provider) {
-      return []
-    }
-    const validation = provider.validateProfile(profile)
-    if (!validation.ok) {
-      return []
-    }
-    const summary = provider.summarizeProfile(profile)
-    return [
-      {
-        id: profile.id,
-        name: profile.name,
-        provider: profile.provider,
-        default:
-          config.defaultProfile === profile.id ||
-          (!config.defaultProfile && config.profiles[0]?.id === profile.id),
-        docsUrls: dependencies.getDocumentationSources(provider).map(doc => doc.url),
-        connection: summary.connection,
-        capabilities: summary.capabilities,
-      },
-    ]
-  })
-
-const formatProfileSummary = (profile: SellerProfileSummary) =>
-  [
-    `${profile.name} (${profile.id})`,
-    `Provider: ${profile.provider}`,
-    profile.default ? "Default profile: yes" : null,
-    `Connection: ${Object.entries(profile.connection)
-      .map(([key, value]) => `${key}=${String(value)}`)
-      .join(", ")}`,
-    `Docs: ${profile.docsUrls.join(", ")}`,
-    `Capabilities: search=${profile.capabilities.search ? "yes" : "no"}, execute=${profile.capabilities.execute.join(", ") || "none"}`,
-  ]
-    .filter(Boolean)
-    .join("\n")
-
-const resolveProfileSummary = (
-  profiles: SellerProfileSummary[],
-  profileId?: string,
-): SellerProfileSummary | undefined => {
-  if (profileId) {
-    return profiles.find(profile => profile.id === profileId)
-  }
-
-  return profiles.find(profile => profile.default) ?? profiles[0]
-}
 
 const formatSearchResults = (results: ProviderSearchDocument[], query: string) => {
   if (results.length === 0) {
@@ -160,7 +100,7 @@ const formatSearchResults = (results: ProviderSearchDocument[], query: string) =
 }
 
 const formatExecuteResult = (input: {
-  profile: SellerProfileSummary
+  profile: SellerProfileInspection
   status: "ok" | "error"
   result: unknown
   logs: string[]
@@ -210,7 +150,7 @@ export const registerSellerTools = (
         return textResult("seller_profiles requires operation=list|get and an optional profileId.")
       }
 
-      const profiles = listProfileSummaries(pluginConfig, dependencies)
+      const profiles = inspectConfiguredProfiles(pluginConfig, dependencies)
       if (profiles.length === 0) {
         return textResult(
           "No provider profiles are configured. Add at least one profile under plugins.entries.seller-assistant.config.profiles.",
@@ -218,19 +158,19 @@ export const registerSellerTools = (
       }
 
       if (input.operation === "list") {
-        return textResultWithDetails(profiles.map(formatProfileSummary).join("\n\n"), {
+        return textResultWithDetails(profiles.map(formatProfileInspection).join("\n\n"), {
           status: "ok",
           operation: input.operation,
           profiles,
         })
       }
 
-      const profile = resolveProfileSummary(profiles, input.profileId)
+      const profile = resolveProfileInspection(profiles, input.profileId)
       if (!profile) {
         return textResult("The requested profile was not found.")
       }
 
-      return textResultWithDetails(formatProfileSummary(profile), {
+      return textResultWithDetails(formatProfileInspection(profile), {
         status: "ok",
         operation: input.operation,
         profile,
@@ -314,16 +254,16 @@ export const registerSellerTools = (
         return textResult(validation.reason)
       }
 
-      const summaries = listProfileSummaries(pluginConfig, dependencies)
-      const profileSummary = summaries.find(item => item.id === profile.id)
-      if (!profileSummary) {
-        return textResult(`Profile "${profile.id}" is configured but unavailable.`)
-      }
-
-      if (!profileSummary.capabilities.execute.includes(input.mode)) {
+      if (!inferExecuteModes(profile.policy.scopes).includes(input.mode)) {
         return textResult(
           `Profile "${profile.id}" does not allow ${input.mode} execution. Update policy.resources in the plugin config to grant the needed local scopes.`,
         )
+      }
+
+      const inspections = inspectConfiguredProfiles(pluginConfig, dependencies)
+      const profileInspection = inspections.find(item => item.id === profile.id)
+      if (!profileInspection) {
+        return textResult(`Profile "${profile.id}" is configured but unavailable.`)
       }
 
       const result = await dependencies.executeScript({
@@ -336,7 +276,7 @@ export const registerSellerTools = (
 
       return textResultWithDetails(
         formatExecuteResult({
-          profile: profileSummary,
+          profile: profileInspection,
           status: result.status,
           result: result.result,
           logs: result.logs,
@@ -346,7 +286,7 @@ export const registerSellerTools = (
         {
           status: result.status,
           provider: provider.name,
-          profile: profileSummary,
+          profile: profileInspection,
           runtime: input.runtime,
           mode: input.mode,
           script: input.script,
