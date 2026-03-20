@@ -2,11 +2,11 @@ import type { AgentToolResult } from "@mariozechner/pi-agent-core"
 import { Type, type Static, type TSchema } from "@sinclair/typebox"
 import { Value } from "@sinclair/typebox/value"
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
-import { executeReadOnlyScript } from "./execute.ts"
+import { executeScript } from "./execute.ts"
 import { findConfiguredProfile, type PluginConfig, type ProviderProfile } from "./config.ts"
 import { searchDocumentation } from "./docs.ts"
 import { findProvider, getDocumentationSources, listProviders } from "./providers/index.ts"
-import type { Provider, ProviderSearchDocument } from "./providers/types.ts"
+import type { ExecutionMode, Provider, ProviderSearchDocument } from "./providers/types.ts"
 import { textResult, textResultWithDetails } from "./utils.ts"
 
 const SellerProfilesParamsSchema = Type.Object(
@@ -32,7 +32,7 @@ const SellerExecuteParamsSchema = Type.Object(
   {
     profileId: Type.Optional(Type.String()),
     runtime: Type.Literal("javascript"),
-    mode: Type.Literal("read"),
+    mode: Type.Union([Type.Literal("read"), Type.Literal("write")]),
     script: Type.String({ minLength: 1 }),
     timeoutMs: Type.Optional(Type.Number({ minimum: 100, maximum: 60000 })),
   },
@@ -58,7 +58,7 @@ export type SellerToolDependencies = {
   findProvider: typeof findProvider
   getDocumentationSources: typeof getDocumentationSources
   searchDocumentation: typeof searchDocumentation
-  executeReadOnlyScript: typeof executeReadOnlyScript
+  executeScript: typeof executeScript
 }
 
 const DEFAULT_SELLER_TOOL_DEPENDENCIES: SellerToolDependencies = {
@@ -66,7 +66,7 @@ const DEFAULT_SELLER_TOOL_DEPENDENCIES: SellerToolDependencies = {
   findProvider,
   getDocumentationSources,
   searchDocumentation,
-  executeReadOnlyScript,
+  executeScript,
 }
 
 type SellerProfileSummary = {
@@ -78,7 +78,7 @@ type SellerProfileSummary = {
   connection: Record<string, unknown>
   capabilities: {
     search: boolean
-    execute: Array<"read">
+    execute: ExecutionMode[]
   }
 }
 
@@ -289,13 +289,13 @@ export const registerSellerTools = (
     name: "seller_execute",
     label: "Seller Execute",
     description:
-      "Execute a read-only JavaScript script against one configured provider profile. Scripts should use provider.graphql(...) or provider.request(...).",
+      "Execute a JavaScript script against one configured provider profile through provider helpers. Write operations require matching local policy scopes.",
     parameters: SellerExecuteParamsSchema,
     async execute(_id: string, params: SellerExecuteParams) {
       const input = validateParams<SellerExecuteParams>(SellerExecuteParamsSchema, params)
       if (!input) {
         return textResult(
-          'seller_execute requires runtime="javascript", mode="read", script, and an optional profileId/timeoutMs.',
+          'seller_execute requires runtime="javascript", mode="read|write", script, and an optional profileId/timeoutMs.',
         )
       }
 
@@ -320,9 +320,16 @@ export const registerSellerTools = (
         return textResult(`Profile "${profile.id}" is configured but unavailable.`)
       }
 
-      const result = await dependencies.executeReadOnlyScript({
+      if (!profileSummary.capabilities.execute.includes(input.mode)) {
+        return textResult(
+          `Profile "${profile.id}" does not allow ${input.mode} execution. Update policy.resources in the plugin config to grant the needed local scopes.`,
+        )
+      }
+
+      const result = await dependencies.executeScript({
         provider,
         profile,
+        mode: input.mode,
         script: input.script,
         timeoutMs: input.timeoutMs ?? 15000,
       })

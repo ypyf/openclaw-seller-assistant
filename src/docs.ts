@@ -26,8 +26,10 @@ type SearchDocumentationInput = {
   sources: ProviderDocumentationSource[]
 }
 
+type FetchLike = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>
+
 type DocsDependencies = {
-  fetch: typeof fetch
+  fetch: FetchLike
   now: () => number
   cacheTtlMs: number
   cacheStore: Map<string, CachedDocument>

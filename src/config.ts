@@ -1,10 +1,12 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk"
+import { toProfilePolicy, type ProfilePolicy } from "./policy.ts"
 
 export type ProviderProfile = {
   id: string
   name: string
   provider: string
   connection: Record<string, unknown>
+  policy: ProfilePolicy
 }
 
 type RawPluginConfig = Record<string, unknown>
@@ -14,6 +16,7 @@ type RawProviderProfile = {
   name?: unknown
   provider?: unknown
   connection?: unknown
+  policy?: unknown
 }
 
 export type PluginConfig = {
@@ -53,6 +56,7 @@ const toProviderProfile = (value: unknown): ProviderProfile | undefined => {
     name,
     provider,
     connection,
+    policy: toProfilePolicy(isRecord(input.policy) ? input.policy.resources : undefined),
   }
 }
 

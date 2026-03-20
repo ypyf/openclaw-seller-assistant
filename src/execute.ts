@@ -1,10 +1,11 @@
 import vm from "node:vm"
-import type { Provider, ProviderExecuteResult } from "./providers/types.ts"
+import type { ExecutionMode, Provider, ProviderExecuteResult } from "./providers/types.ts"
 import type { ProviderProfile } from "./config.ts"
 
 export type ExecuteScriptInput = {
   provider: Provider
   profile: ProviderProfile
+  mode: ExecutionMode
   script: string
   timeoutMs: number
 }
@@ -82,10 +83,8 @@ const normalizeResult = (value: unknown) => {
   }
 }
 
-/** Executes a JavaScript function body with a provider-scoped read-only context. */
-export const executeReadOnlyScript = async (
-  input: ExecuteScriptInput,
-): Promise<ExecuteScriptResult> => {
+/** Executes a JavaScript function body with a provider-scoped execution context. */
+export const executeScript = async (input: ExecuteScriptInput): Promise<ExecuteScriptResult> => {
   const validationError = validateScript(input.script)
   if (validationError) {
     return {
@@ -108,6 +107,9 @@ export const executeReadOnlyScript = async (
     const providerContext = await input.provider.createExecutorContext(
       input.profile,
       controller.signal,
+      {
+        mode: input.mode,
+      },
     )
     requestSummary = providerContext.requestSummary
     rawResponses = providerContext.rawResponses
@@ -156,7 +158,7 @@ export const executeReadOnlyScript = async (
         })()
       `,
       {
-        filename: `${input.profile.provider}-${input.profile.id}-read.js`,
+        filename: `${input.profile.provider}-${input.profile.id}-${input.mode}.js`,
       },
     )
 

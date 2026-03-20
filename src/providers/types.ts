@@ -1,10 +1,12 @@
 import type { ProviderProfile } from "../config.ts"
 
+export type ExecutionMode = "read" | "write"
+
 export type ProviderPublicProfileSummary = {
   connection: Record<string, unknown>
   capabilities: {
     search: boolean
-    execute: Array<"read">
+    execute: ExecutionMode[]
   }
 }
 
@@ -81,5 +83,8 @@ export type Provider = {
   createExecutorContext: (
     profile: ProviderProfile,
     signal: AbortSignal,
+    input: {
+      mode: ExecutionMode
+    },
   ) => Promise<ProviderExecutorContext & ProviderExecuteResult>
 }

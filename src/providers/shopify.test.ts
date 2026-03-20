@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { afterEach, describe, it, mock } from "node:test"
+import { toProfilePolicy } from "../policy.ts"
 import { shopifyProvider } from "./shopify.ts"
 
 const TEST_SECRET_ENV = "TEST_SHOPIFY_CLIENT_SECRET"
 
-const createProfile = () => ({
+const createProfile = (resources: Record<string, string[]> = { "*": ["read"] }) => ({
   id: "shopify-main",
   name: "Main Shopify",
   provider: "shopify",
@@ -13,6 +14,7 @@ const createProfile = () => ({
     clientId: "client-id",
     clientSecretEnv: TEST_SECRET_ENV,
   },
+  policy: toProfilePolicy(resources),
 })
 
 const mockShopifyFetch = (
@@ -96,6 +98,9 @@ describe("shopifyProvider", () => {
     const context = await shopifyProvider.createExecutorContext(
       createProfile(),
       new AbortController().signal,
+      {
+        mode: "read",
+      },
     )
 
     const graphqlResult = await context.graphql("query { shop { name } }")
@@ -118,6 +123,9 @@ describe("shopifyProvider", () => {
     const context = await shopifyProvider.createExecutorContext(
       createProfile(),
       new AbortController().signal,
+      {
+        mode: "read",
+      },
     )
 
     await assert.rejects(
@@ -149,6 +157,9 @@ describe("shopifyProvider", () => {
     const context = await shopifyProvider.createExecutorContext(
       createProfile(),
       new AbortController().signal,
+      {
+        mode: "read",
+      },
     )
 
     const requestResult = await context.request({
@@ -171,6 +182,9 @@ describe("shopifyProvider", () => {
     const context = await shopifyProvider.createExecutorContext(
       createProfile(),
       new AbortController().signal,
+      {
+        mode: "read",
+      },
     )
 
     await assert.rejects(
@@ -210,6 +224,9 @@ describe("shopifyProvider", () => {
     const context = await shopifyProvider.createExecutorContext(
       createProfile(),
       new AbortController().signal,
+      {
+        mode: "read",
+      },
     )
 
     const result = await context.graphql(`
@@ -246,6 +263,9 @@ describe("shopifyProvider", () => {
     const context = await shopifyProvider.createExecutorContext(
       createProfile(),
       new AbortController().signal,
+      {
+        mode: "read",
+      },
     )
 
     const result = await context.graphql(`
@@ -267,6 +287,9 @@ describe("shopifyProvider", () => {
     const context = await shopifyProvider.createExecutorContext(
       createProfile(),
       new AbortController().signal,
+      {
+        mode: "read",
+      },
     )
 
     await assert.rejects(
@@ -298,6 +321,9 @@ describe("shopifyProvider", () => {
     const context = await shopifyProvider.createExecutorContext(
       createProfile(),
       new AbortController().signal,
+      {
+        mode: "read",
+      },
     )
 
     await assert.rejects(
@@ -314,6 +340,83 @@ describe("shopifyProvider", () => {
           }
         `),
       /queries.*subscriptions are not allowed/i,
+    )
+  })
+
+  it("allows scoped mutations in write mode", async () => {
+    fetchMock = mockShopifyFetch(async (url, init) => {
+      assert.equal(url, "https://example.myshopify.com/admin/api/2026-01/graphql.json")
+      assert.equal(init?.method, "POST")
+      return new Response(
+        JSON.stringify({
+          data: {
+            productUpdate: {
+              product: {
+                id: "gid://shopify/Product/1",
+              },
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      )
+    })
+
+    const context = await shopifyProvider.createExecutorContext(
+      createProfile({
+        "*": ["read"],
+        product: ["write"],
+      }),
+      new AbortController().signal,
+      {
+        mode: "write",
+      },
+    )
+
+    const result = await context.graphql(`
+      mutation UpdateProduct {
+        productUpdate(product: { id: "gid://shopify/Product/1", title: "Updated" }) {
+          product {
+            id
+          }
+        }
+      }
+    `)
+
+    assert.notEqual(result, undefined)
+  })
+
+  it("rejects write operations when the local scopes do not allow them", async () => {
+    fetchMock = mockShopifyFetch(async url => {
+      assert.fail(`Unexpected fetch URL: ${url}`)
+    })
+
+    const context = await shopifyProvider.createExecutorContext(
+      createProfile({
+        "*": ["read"],
+      }),
+      new AbortController().signal,
+      {
+        mode: "write",
+      },
+    )
+
+    await assert.rejects(
+      () =>
+        context.graphql(`
+          mutation UpdateProduct {
+            productUpdate(product: { id: "gid://shopify/Product/1", title: "Updated" }) {
+              product {
+                id
+              }
+            }
+          }
+        `),
+      /does not allow product\.write/i,
     )
   })
 })

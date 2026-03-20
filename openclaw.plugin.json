@@ -1,7 +1,7 @@
 {
   "id": "seller-assistant",
   "name": "Seller Assistant",
-  "description": "Generic seller platform runtime with profile discovery, official-doc search, and read-only JavaScript execution.",
+  "description": "Generic seller platform runtime with profile discovery, official-doc search, and policy-gated JavaScript execution.",
   "version": "2026.3.20",
   "skills": ["./skills"],
   "configSchema": {
@@ -46,6 +46,23 @@
             "connection": {
               "type": "object",
               "description": "Provider-specific connection settings."
+            },
+            "policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Local authorization policy for this profile. Omit it to keep the profile read-only by default.",
+              "properties": {
+                "resources": {
+                  "type": "object",
+                  "description": "Allowed actions by business resource. Keys and action names may use * as a wildcard segment, for example {\"*\": [\"read\"], \"product\": [\"write\"]}.",
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
             }
           },
           "required": ["id", "name", "provider", "connection"]

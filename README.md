@@ -4,13 +4,13 @@
 
 - `seller_profiles`: inspect configured provider profiles and their safe connection summary
 - `seller_search`: search provider notes plus official platform documentation
-- `seller_execute`: run read-only JavaScript against a configured profile through provider helpers
+- `seller_execute`: run JavaScript against a configured profile through provider helpers
 
 The plugin does not call a model directly. Skills and the host agent search docs, generate scripts, execute them, then summarize the result.
 
-## Current Scope
+## Supported Platforms
 
-The plugin currently includes one built-in provider:
+The plugin currently includes one built-in platform:
 
 - `shopify`
 
@@ -63,6 +63,12 @@ Example:
                 "clientId": "your_shopify_client_id",
                 "clientSecretEnv": "SHOPIFY_CLIENT_SECRET",
                 "apiVersion": "2026-01"
+              },
+              "policy": {
+                "resources": {
+                  "*": ["read"],
+                  "product": ["write"]
+                }
               }
             }
           ]
@@ -93,11 +99,27 @@ Important Shopify connection fields:
 - `clientSecretEnv`: environment variable containing that app client secret
 - `apiVersion`: optional Admin API version override
 
-Example environment setup:
+### Environment Variable for `clientSecretEnv`
+
+The profile's `clientSecretEnv` value should point to an environment variable on the OpenClaw host that contains the Shopify app client secret.
+
+Example:
 
 ```bash
 export SHOPIFY_CLIENT_SECRET="shpss_..."
 ```
+
+Profile policy fields:
+
+- `policy.resources`: optional local authorization rules grouped by business resource
+- omit `policy` to keep the default local policy of `{"*": ["read"]}`
+- use `*` as a wildcard resource or action, for example `{"*": ["read"], "inventory": ["write"]}`
+
+### Shopify App Access Scopes
+
+`policy.resources` is a local plugin authorization layer. It does not grant Shopify Admin API access by itself.
+
+For Shopify requests to succeed, the Shopify app behind the profile must also have the matching Shopify Admin API access scopes. For the full auth model, Shopify setup steps, local-to-Shopify scope mapping, Shopify CLI `shopify.app.toml` configuration, and troubleshooting checklist, see [Shopify Auth, Setup, and Scopes](./docs/shopify-auth-and-scopes.md).
 
 ## Tool Model
 
@@ -134,7 +156,7 @@ Set `refresh: true` to force a doc refetch instead of using the in-memory cache.
 
 ### `seller_execute`
 
-Use this tool to run read-only JavaScript. Scripts should use `provider.graphql(...)` or `provider.request(...)`.
+Use this tool to run JavaScript. Scripts should use `provider.graphql(...)` or `provider.request(...)`.
 
 Example:
 
@@ -147,12 +169,13 @@ Example:
 }
 ```
 
+For write workflows, opt into local scopes in the profile policy and call the tool with `mode: "write"`. The provider maps concrete GraphQL or REST operations back to business scopes such as `product.write`.
+
 In this runtime, `provider.graphql(...)` returns the GraphQL `data` object directly after response validation. Access fields like `data?.productVariants`, not `data?.data?.productVariants`.
 
 Execution is intentionally constrained:
 
 - JavaScript only
-- read-only mode only
 - no shell access
 - no filesystem access
 - no direct `fetch`; use provider helpers
@@ -161,7 +184,7 @@ Execution is intentionally constrained:
 
 The plugin ships with:
 
-- a seller API workflow skill that selects a profile, searches docs, plans a read-only script, executes it, and summarizes the result
+- a seller API workflow skill that selects a profile, searches docs, plans a script, executes it, and summarizes the result
 
 ## Usage
 
@@ -181,7 +204,7 @@ Representative prompts:
 The agent can also handle explicit runtime asks when needed:
 
 - "Search Shopify docs for fulfillment order pagination."
-- "Using my default Shopify profile, generate a read-only query for the latest five orders and summarize payment status."
+- "Using my default Shopify profile, generate a query for the latest five orders and summarize payment status."
 
 For more examples, see [Usage Examples](./docs/usage-examples.md).
 
@@ -190,6 +213,7 @@ For more examples, see [Usage Examples](./docs/usage-examples.md).
 - `seller_profiles` does not return secret values or environment variable names.
 - `seller_search` prefers provider-curated notes before official doc chunks.
 - `seller_execute` returns the script, request summary, logs, structured result, and raw response excerpts for downstream analysis.
+- local `policy.resources` scopes gate operations before provider requests are sent.
 - Shopify order access may still require protected customer data approval in addition to `read_orders`.
 
 ## License

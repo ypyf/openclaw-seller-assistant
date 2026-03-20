@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { executeReadOnlyScript } from "./execute.ts"
-import type { Provider } from "./providers/types.ts"
+import { executeScript } from "./execute.ts"
+import type { Provider, ProviderHttpResponse, ProviderRequestLogEntry } from "./providers/types.ts"
+import { toProfilePolicy } from "./policy.ts"
 
 const testProvider: Provider = {
   name: "shopify",
@@ -15,12 +16,13 @@ const testProvider: Provider = {
     },
     capabilities: {
       search: true,
-      execute: ["read"],
+      execute: ["read", "write"],
     },
   }),
-  async createExecutorContext() {
-    const requestSummary = []
-    const rawResponses = []
+  async createExecutorContext(_profile, _signal, input) {
+    assert.equal(input.mode, "read")
+    const requestSummary: ProviderRequestLogEntry[] = []
+    const rawResponses: ProviderHttpResponse[] = []
     return {
       profile: {
         id: "shopify-main",
@@ -69,9 +71,9 @@ const testProvider: Provider = {
   },
 }
 
-describe("executeReadOnlyScript", () => {
-  it("runs a read-only script with provider helpers", async () => {
-    const result = await executeReadOnlyScript({
+describe("executeScript", () => {
+  it("runs a script with provider helpers", async () => {
+    const result = await executeScript({
       provider: testProvider,
       profile: {
         id: "shopify-main",
@@ -82,7 +84,9 @@ describe("executeReadOnlyScript", () => {
           clientId: "client-id",
           clientSecretEnv: "SHOPIFY_CLIENT_SECRET",
         },
+        policy: toProfilePolicy(undefined),
       },
+      mode: "read",
       timeoutMs: 1000,
       script: `
         const shop = await provider.graphql("query { shop { name } }")
@@ -95,7 +99,7 @@ describe("executeReadOnlyScript", () => {
   })
 
   it("rejects forbidden globals and modules", async () => {
-    const result = await executeReadOnlyScript({
+    const result = await executeScript({
       provider: testProvider,
       profile: {
         id: "shopify-main",
@@ -106,7 +110,9 @@ describe("executeReadOnlyScript", () => {
           clientId: "client-id",
           clientSecretEnv: "SHOPIFY_CLIENT_SECRET",
         },
+        policy: toProfilePolicy(undefined),
       },
+      mode: "read",
       timeoutMs: 1000,
       script: `
         return process.env

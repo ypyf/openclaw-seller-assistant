@@ -22,6 +22,12 @@ describe("toPluginConfig", () => {
               clientId: "client-id",
               clientSecretEnv: "SHOPIFY_CLIENT_SECRET",
             },
+            policy: {
+              resources: {
+                product: ["read", "write"],
+                inventory: ["write"],
+              },
+            },
           },
         ],
       },
@@ -32,6 +38,15 @@ describe("toPluginConfig", () => {
     assert.equal(config.defaultProfile, "shopify-main")
     assert.equal(config.profiles.length, 1)
     assert.equal(config.profiles[0]?.connection.storeDomain, "example.myshopify.com")
+    assert.deepEqual(config.profiles[0]?.policy.resources, {
+      product: ["read", "write"],
+      inventory: ["write"],
+    })
+    assert.deepEqual(config.profiles[0]?.policy.scopes, [
+      "product.read",
+      "product.write",
+      "inventory.write",
+    ])
   })
 
   it("resolves configured profiles by id, default, and provider", () => {
@@ -69,5 +84,8 @@ describe("toPluginConfig", () => {
       findProfilesByProvider(config, "shopify").map(profile => profile.id),
       ["shopify-main", "shopify-secondary"],
     )
+    assert.deepEqual(config.profiles[1]?.policy.resources, {
+      "*": ["read"],
+    })
   })
 })

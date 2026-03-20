@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import type { PluginConfig } from "./config.ts"
 import { registerSellerTools, type SellerToolApi, type SellerToolDependencies } from "./tools.ts"
+import { toProfilePolicy } from "./policy.ts"
 
 const createPluginConfig = (): PluginConfig => ({
   currency: "USD",
@@ -18,6 +19,10 @@ const createPluginConfig = (): PluginConfig => ({
         clientId: "client-id",
         clientSecretEnv: "SHOPIFY_CLIENT_SECRET",
       },
+      policy: toProfilePolicy({
+        "*": ["read"],
+        product: ["write"],
+      }),
     },
   ],
 })
@@ -42,7 +47,7 @@ const createDependencies = (): SellerToolDependencies => {
       },
       capabilities: {
         search: true,
-        execute: ["read" as const],
+        execute: ["read" as const, "write" as const],
       },
     }),
     async createExecutorContext() {
@@ -65,7 +70,7 @@ const createDependencies = (): SellerToolDependencies => {
         score: 12,
       },
     ],
-    executeReadOnlyScript: async input => ({
+    executeScript: async input => ({
       status: "ok" as const,
       result: {
         ok: true,
@@ -111,8 +116,14 @@ const createToolApi = () => {
   const api: SellerToolApi = {
     logger: {
       info: () => {},
+      warn: () => {},
+      error: () => {},
     },
     registerTool(tool) {
+      if (!("execute" in tool)) {
+        throw new Error("tool factories are not used in these tests")
+      }
+
       registrations.push({
         name: tool.name,
         execute: tool.execute,
@@ -194,5 +205,49 @@ describe("registerSellerTools", () => {
     }
 
     assert.equal(executeResult.details.status, "ok")
+  })
+
+  it("rejects write execution when the profile policy only allows read access", async () => {
+    const config = createPluginConfig()
+    config.profiles[0] = {
+      ...config.profiles[0],
+      policy: toProfilePolicy({
+        "*": ["read"],
+      }),
+    }
+
+    const dependencies = createDependencies()
+    const originalFindProvider = dependencies.findProvider
+    dependencies.findProvider = providerName =>
+      providerName === "shopify"
+        ? {
+            ...originalFindProvider("shopify")!,
+            summarizeProfile: () => ({
+              connection: {
+                storeDomain: "example.myshopify.com",
+                apiVersion: "2026-01",
+              },
+              capabilities: {
+                search: true,
+                execute: ["read" as const],
+              },
+            }),
+          }
+        : undefined
+
+    const { api, registrations } = createToolApi()
+    registerSellerTools(api, config, dependencies)
+
+    const sellerExecute = registrations.find(tool => tool.name === "seller_execute")
+    const result = (await sellerExecute?.execute("tool-write-denied", {
+      runtime: "javascript",
+      mode: "write",
+      script:
+        'return await provider.graphql("mutation { productUpdate(product: { id: \\"gid://shopify/Product/1\\" }) { userErrors { field } } }")',
+    })) as {
+      content: Array<{ text: string }>
+    }
+
+    assert.match(result.content[0]?.text ?? "", /does not allow write execution/i)
   })
 })

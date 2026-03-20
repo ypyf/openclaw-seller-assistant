@@ -1,6 +1,6 @@
 # Usage Examples
 
-These examples are business-facing requests. The agent can satisfy them by searching provider docs, generating a read-only script, executing it, and summarizing the result.
+These examples are business-facing requests. The agent can satisfy them by searching provider docs, generating a script, executing it, and summarizing the result.
 
 ## Store Sales
 
@@ -48,5 +48,5 @@ These examples are business-facing requests. The agent can satisfy them by searc
 
 - "Search Shopify docs for Admin GraphQL order queries."
 - "Look up Shopify docs for fulfillment order pagination."
-- "Using my default Shopify profile, generate a read-only GraphQL query for open fulfillment orders and summarize the result."
+- "Using my default Shopify profile, generate a GraphQL query for open fulfillment orders and summarize the result."
 - "Refresh the Shopify docs cache and search for protected customer data requirements."

@@ -1,5 +1,6 @@
 import type { ProviderProfile } from "../config.ts"
 import type {
+  ExecutionMode,
   Provider,
   ProviderDocumentationNote,
   ProviderDocumentationSource,
@@ -9,6 +10,7 @@ import type {
   ProviderHttpResponse,
   ProviderRequestLogEntry,
 } from "./types.ts"
+import { allowsScope, inferExecuteModes, type Scope } from "../policy.ts"
 
 type ShopifyConnection = {
   storeDomain: string
@@ -24,6 +26,44 @@ declare const process: {
 const DEFAULT_SHOPIFY_API_VERSION = "2026-01"
 const RAW_RESPONSE_LIMIT = 4_000
 const READ_ONLY_REST_METHODS = new Set(["GET", "HEAD"])
+const WRITE_REST_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
+
+const SHOPIFY_REST_RESOURCE_BY_SEGMENT: Record<string, string> = {
+  collections: "collection",
+  custom_collections: "collection",
+  customers: "customer",
+  discounts: "discount",
+  draft_orders: "order",
+  fulfillment_orders: "order",
+  fulfillments: "order",
+  inventory_items: "inventory",
+  inventory_levels: "inventory",
+  locations: "inventory",
+  order_edits: "order",
+  orders: "order",
+  price_rules: "discount",
+  product_listings: "product",
+  products: "product",
+  returns: "return",
+  smart_collections: "collection",
+  variants: "product",
+}
+
+const SHOPIFY_GRAPHQL_RESOURCE_PREFIXES: Array<{ prefix: string; resource: string }> = [
+  { prefix: "fulfillmentorder", resource: "order" },
+  { prefix: "draftorder", resource: "order" },
+  { prefix: "inventory", resource: "inventory" },
+  { prefix: "product", resource: "product" },
+  { prefix: "variant", resource: "product" },
+  { prefix: "order", resource: "order" },
+  { prefix: "shop", resource: "shop" },
+  { prefix: "return", resource: "return" },
+  { prefix: "customer", resource: "customer" },
+  { prefix: "collection", resource: "collection" },
+  { prefix: "discount", resource: "discount" },
+  { prefix: "pricerule", resource: "discount" },
+  { prefix: "location", resource: "inventory" },
+]
 
 const defaultDocs: ProviderDocumentationSource[] = [
   {
@@ -233,6 +273,38 @@ const createRequestLogger = (
   }
 }
 
+const toExecuteAction = (method: string, mode: ExecutionMode) => {
+  if (READ_ONLY_REST_METHODS.has(method)) {
+    return "read"
+  }
+
+  if (WRITE_REST_METHODS.has(method)) {
+    if (mode === "read") {
+      throw new Error(`Shopify read-only requests only support GET or HEAD. Received ${method}.`)
+    }
+    return "write"
+  }
+
+  throw new Error(`Shopify does not support ${method} in the executor context.`)
+}
+
+const toRestResource = (path: string) => {
+  const segment = path
+    .split("/")
+    .find(part => part.length > 0)
+    ?.replace(/\.json$/u, "")
+
+  return segment ? SHOPIFY_REST_RESOURCE_BY_SEGMENT[segment] : undefined
+}
+
+const assertScopeAllowed = (profile: ProviderProfile, scope: Scope, description: string) => {
+  if (!allowsScope(profile.policy.scopes, scope)) {
+    throw new Error(
+      `Profile "${profile.id}" does not allow ${scope}. Update policy.resources to permit ${description}.`,
+    )
+  }
+}
+
 const isGraphqlNameStart = (character: string) => /[_A-Za-z]/u.test(character)
 
 const isGraphqlNameCharacter = (character: string) => /[_0-9A-Za-z]/u.test(character)
@@ -410,7 +482,123 @@ const consumeGraphqlDefinitionHeader = (tokens: GraphqlToken[], startIndex: numb
   return index
 }
 
-const containsGraphqlNonQueryOperation = (document: string) => {
+const findGraphqlDefinitionSelectionSetStart = (tokens: GraphqlToken[], startIndex: number) => {
+  let index = startIndex
+  let parenDepth = 0
+  let bracketDepth = 0
+
+  while (index < tokens.length) {
+    const token = tokens[index]
+    if (token?.kind === "punctuator") {
+      if (token.value === "(") {
+        parenDepth += 1
+      } else if (token.value === ")") {
+        parenDepth = Math.max(0, parenDepth - 1)
+      } else if (token.value === "[") {
+        bracketDepth += 1
+      } else if (token.value === "]") {
+        bracketDepth = Math.max(0, bracketDepth - 1)
+      } else if (token.value === "{" && parenDepth === 0 && bracketDepth === 0) {
+        return index
+      }
+    }
+
+    index += 1
+  }
+
+  return undefined
+}
+
+const readFirstGraphqlRootField = (tokens: GraphqlToken[], selectionSetStart: number) => {
+  let index = selectionSetStart + 1
+  let braceDepth = 1
+  let parenDepth = 0
+  let bracketDepth = 0
+
+  while (index < tokens.length) {
+    const token = tokens[index]
+
+    if (token?.kind === "punctuator") {
+      if (token.value === "(") {
+        parenDepth += 1
+      } else if (token.value === ")") {
+        parenDepth = Math.max(0, parenDepth - 1)
+      } else if (token.value === "[") {
+        bracketDepth += 1
+      } else if (token.value === "]") {
+        bracketDepth = Math.max(0, bracketDepth - 1)
+      } else if (token.value === "{") {
+        braceDepth += 1
+      } else if (token.value === "}") {
+        braceDepth -= 1
+        if (braceDepth === 0) {
+          return undefined
+        }
+      }
+
+      index += 1
+      continue
+    }
+
+    if (braceDepth === 1 && parenDepth === 0 && bracketDepth === 0 && token?.kind === "name") {
+      const next = tokens[index + 1]
+      const aliasedField =
+        next?.kind === "punctuator" && next.value === ":" ? tokens[index + 2] : token
+      return aliasedField?.kind === "name" ? aliasedField.value : undefined
+    }
+
+    index += 1
+  }
+
+  return undefined
+}
+
+type GraphqlOperationType = "query" | "mutation" | "subscription"
+
+const collectGraphqlOperationTypes = (document: string): GraphqlOperationType[] => {
+  const tokens = tokenizeGraphqlDocument(document)
+  const operationTypes: GraphqlOperationType[] = []
+  let index = 0
+
+  while (index < tokens.length) {
+    const token = tokens[index]
+    if (!token) {
+      break
+    }
+
+    if (token.kind === "punctuator" && token.value === "{") {
+      operationTypes.push("query")
+      index = consumeGraphqlSelectionSet(tokens, index)
+      continue
+    }
+
+    if (token.kind === "name") {
+      if (token.value === "query" || token.value === "mutation" || token.value === "subscription") {
+        operationTypes.push(token.value)
+        index = consumeGraphqlDefinitionHeader(tokens, index + 1)
+        continue
+      }
+
+      if (token.value === "fragment") {
+        index = consumeGraphqlDefinitionHeader(tokens, index + 1)
+        continue
+      }
+    }
+
+    index += 1
+  }
+
+  return operationTypes
+}
+
+const containsGraphqlNonQueryOperation = (document: string) =>
+  collectGraphqlOperationTypes(document).some(
+    operationType => operationType === "mutation" || operationType === "subscription",
+  )
+
+const getPrimaryGraphqlOperation = (
+  document: string,
+): { type: GraphqlOperationType; rootField?: string } | undefined => {
   const tokens = tokenizeGraphqlDocument(document)
   let index = 0
 
@@ -421,16 +609,25 @@ const containsGraphqlNonQueryOperation = (document: string) => {
     }
 
     if (token.kind === "punctuator" && token.value === "{") {
-      index = consumeGraphqlSelectionSet(tokens, index)
-      continue
+      return {
+        type: "query",
+        rootField: readFirstGraphqlRootField(tokens, index),
+      }
     }
 
     if (token.kind === "name") {
-      if (token.value === "mutation" || token.value === "subscription") {
-        return true
+      if (token.value === "query" || token.value === "mutation" || token.value === "subscription") {
+        const selectionSetStart = findGraphqlDefinitionSelectionSetStart(tokens, index + 1)
+        return {
+          type: token.value,
+          rootField:
+            selectionSetStart === undefined
+              ? undefined
+              : readFirstGraphqlRootField(tokens, selectionSetStart),
+        }
       }
 
-      if (token.value === "query" || token.value === "fragment") {
+      if (token.value === "fragment") {
         index = consumeGraphqlDefinitionHeader(tokens, index + 1)
         continue
       }
@@ -439,12 +636,54 @@ const containsGraphqlNonQueryOperation = (document: string) => {
     index += 1
   }
 
-  return false
+  return undefined
+}
+
+const toGraphqlResource = (fieldName: string | undefined) => {
+  if (!fieldName) {
+    return undefined
+  }
+
+  const normalized = fieldName.toLowerCase()
+  const match = SHOPIFY_GRAPHQL_RESOURCE_PREFIXES.find(item => normalized.startsWith(item.prefix))
+  return match?.resource
+}
+
+const resolveGraphqlScope = (document: string, mode: ExecutionMode): Scope => {
+  const operation = getPrimaryGraphqlOperation(document)
+  if (!operation) {
+    throw new Error("Shopify GraphQL document did not include an executable operation.")
+  }
+
+  if (operation.type === "subscription") {
+    throw new Error(
+      "Shopify GraphQL executor does not support subscriptions. Use a query or mutation instead.",
+    )
+  }
+
+  if (operation.type === "mutation" && mode === "read") {
+    throw new Error(
+      "Shopify read-only GraphQL only supports queries. Mutations and subscriptions are not allowed.",
+    )
+  }
+
+  const resource = toGraphqlResource(operation.rootField)
+  if (!resource) {
+    throw new Error(
+      `Shopify GraphQL operation could not be mapped to a local scope from root field "${operation.rootField ?? "unknown"}".`,
+    )
+  }
+
+  const action = operation.type === "query" ? "read" : "write"
+  return `${resource}.${action}` as Scope
 }
 
 const createExecutorContext = async (
   profile: ProviderProfile,
   signal: AbortSignal,
+  execution: {
+    mode: ExecutionMode
+  },
 ): Promise<ProviderExecutorContext & ProviderExecuteResult> => {
   const connection = toShopifyConnection(profile)
   if (!connection) {
@@ -460,11 +699,17 @@ const createExecutorContext = async (
 
   const request = async (input: ProviderHttpRequestInput) => {
     const method = input.method?.trim().toUpperCase() || "GET"
-    if (!READ_ONLY_REST_METHODS.has(method)) {
-      throw new Error(`Shopify read-only requests only support GET or HEAD. Received ${method}.`)
-    }
+    const action = toExecuteAction(method, execution.mode)
 
     const path = input.path.startsWith("/") ? input.path : `/${input.path}`
+    const resource = toRestResource(path)
+    if (!resource) {
+      throw new Error(
+        `Shopify request path "${path}" could not be mapped to a local scope. Add a provider mapping before using this endpoint.`,
+      )
+    }
+
+    assertScopeAllowed(profile, `${resource}.${action}` as Scope, `${method} ${path}`)
     const url = withQuery(new URL(`${baseUrl}${path}`), input.query ?? {})
 
     return runLoggedRequest({
@@ -493,11 +738,14 @@ const createExecutorContext = async (
   }
 
   const graphql = async (query: string, variables?: Record<string, unknown>) => {
-    if (containsGraphqlNonQueryOperation(query)) {
+    if (execution.mode === "read" && containsGraphqlNonQueryOperation(query)) {
       throw new Error(
         "Shopify read-only GraphQL only supports queries. Mutations and subscriptions are not allowed.",
       )
     }
+
+    const scope = resolveGraphqlScope(query, execution.mode)
+    assertScopeAllowed(profile, scope, "this GraphQL operation")
 
     const url = new URL(`${baseUrl}/graphql.json`)
 
@@ -582,7 +830,7 @@ export const shopifyProvider: Provider = {
       },
       capabilities: {
         search: true,
-        execute: ["read"],
+        execute: inferExecuteModes(profile.policy.scopes),
       },
     }
   },
